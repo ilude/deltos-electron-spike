@@ -62,13 +62,64 @@
       background: var(--bg-titlebar);
       display: flex;
       align-items: center;
-      padding: 0 12px;
       -webkit-app-region: drag;
       user-select: none;
       font-size: 12px;
       color: var(--text-dim);
+      height: 30px;
     }
-    .titlebar span { margin: 0 auto; }
+    .titlebar-menu {
+      display: flex;
+      -webkit-app-region: no-drag;
+      height: 100%;
+    }
+    .titlebar-menu-item {
+      padding: 0 8px;
+      display: flex;
+      align-items: center;
+      cursor: pointer;
+      color: var(--text);
+      font-size: 13px;
+    }
+    .titlebar-menu-item:hover {
+      background: rgba(255,255,255,0.08);
+    }
+    .titlebar-title {
+      flex: 1;
+      text-align: center;
+      color: var(--text-dim);
+      font-size: 12px;
+      pointer-events: none;
+    }
+    .titlebar-controls {
+      display: flex;
+      -webkit-app-region: no-drag;
+      height: 100%;
+    }
+    .titlebar-btn {
+      width: 46px;
+      height: 100%;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      cursor: pointer;
+      color: var(--text);
+      font-size: 14px;
+    }
+    .titlebar-btn:hover {
+      background: rgba(255,255,255,0.08);
+    }
+    .titlebar-btn.close:hover {
+      background: #e81123;
+      color: #fff;
+    }
+    .titlebar-btn svg {
+      width: 10px;
+      height: 10px;
+      fill: none;
+      stroke: currentColor;
+      stroke-width: 1.2;
+    }
 
     /* ── Activity Bar ── */
     .activitybar {
@@ -488,13 +539,28 @@
   <div class="app">
     <!-- Title Bar -->
     <div class="titlebar">
-      <span>Deltos</span>
+      <div class="titlebar-menu">
+        <div class="titlebar-menu-item">File</div>
+        <div class="titlebar-menu-item">Edit</div>
+        <div class="titlebar-menu-item">Selection</div>
+        <div class="titlebar-menu-item">View</div>
+        <div class="titlebar-menu-item">Go</div>
+        <div class="titlebar-menu-item">Run</div>
+        <div class="titlebar-menu-item">Terminal</div>
+        <div class="titlebar-menu-item">Help</div>
+      </div>
+      <div class="titlebar-title">Deltos</div>
+      <div class="titlebar-controls">
+        <div class="titlebar-btn" id="btnMinimize"><svg viewBox="0 0 10 10"><line x1="0" y1="5" x2="10" y2="5"/></svg></div>
+        <div class="titlebar-btn" id="btnMaximize"><svg viewBox="0 0 10 10"><rect x="0.5" y="0.5" width="9" height="9"/></svg></div>
+        <div class="titlebar-btn close" id="btnClose"><svg viewBox="0 0 10 10"><line x1="0" y1="0" x2="10" y2="10"/><line x1="10" y1="0" x2="0" y2="10"/></svg></div>
+      </div>
     </div>
 
     <!-- Activity Bar -->
     <div class="activitybar">
       <div class="activitybar-icon active" data-panel="explorer" title="Explorer">&#128462;</div>
-      <div class="activitybar-icon" data-panel="search" title="Search">&#128269;</div>
+      <div class="activitybar-icon" data-panel="search" title="Search" style="font-size:26px">&#9906;</div>
       <div class="activitybar-icon" data-panel="git" title="Source Control">&#9891;</div>
       <div class="activitybar-icon" data-panel="debug" title="Run & Debug">&#9654;</div>
       <div class="activitybar-icon" data-panel="extensions" title="Extensions">&#9638;</div>

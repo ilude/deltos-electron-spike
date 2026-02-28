@@ -1,3 +1,10 @@
+declare const electronAPI: {
+	minimize: () => void;
+	maximize: () => void;
+	close: () => void;
+	platform: string;
+};
+
 interface TreeNode {
 	name: string;
 	type: "folder" | "file";
@@ -393,6 +400,30 @@ document.addEventListener("mouseup", () => {
 	isResizing = false;
 	document.body.style.cursor = "";
 });
+
+// ── Window Controls ──
+document.getElementById("btnMinimize")?.addEventListener("click", () => {
+	electronAPI.minimize();
+});
+document.getElementById("btnMaximize")?.addEventListener("click", () => {
+	electronAPI.maximize();
+});
+document.getElementById("btnClose")?.addEventListener("click", () => {
+	electronAPI.close();
+});
+
+// ── Platform-specific titlebar ──
+const platform = electronAPI.platform;
+document.documentElement.setAttribute("data-platform", platform);
+
+if (platform === "darwin") {
+	// macOS: hide custom window controls, native traffic lights are used
+	const controls = document.querySelector(".titlebar-controls") as HTMLElement;
+	if (controls) controls.style.display = "none";
+	// Add left padding for traffic light buttons
+	const menu = document.querySelector(".titlebar-menu") as HTMLElement;
+	if (menu) menu.style.paddingLeft = "70px";
+}
 
 // ── Open App.tsx by default ──
 openFile("App.tsx");
