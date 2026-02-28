@@ -33,7 +33,8 @@ ipcMain.on("window-maximize", (e) => {
 	}
 });
 ipcMain.on("window-close", (e) => {
-	BrowserWindow.fromWebContents(e.sender)?.close();
+	BrowserWindow.fromWebContents(e.sender)?.hide();
+	app.quit();
 });
 
 app.whenReady().then(() => {
