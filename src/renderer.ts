@@ -1,8 +1,23 @@
+import { FitAddon } from "@xterm/addon-fit";
+import { Terminal } from "@xterm/xterm";
+
+interface ShellInfo {
+	name: string;
+	path: string;
+}
+
 declare const electronAPI: {
 	minimize: () => void;
 	maximize: () => void;
 	close: () => void;
 	platform: string;
+	listShells: () => Promise<ShellInfo[]>;
+	spawnTerminal: (shellPath: string) => Promise<number>;
+	writeTerminal: (id: number, data: string) => void;
+	resizeTerminal: (id: number, cols: number, rows: number) => void;
+	killTerminal: (id: number) => void;
+	onTerminalData: (callback: (id: number, data: string) => void) => () => void;
+	onTerminalExit: (callback: (id: number) => void) => () => void;
 };
 
 interface TreeNode {
@@ -357,22 +372,231 @@ for (const icon of document.querySelectorAll(".activitybar-icon")) {
 	});
 }
 
-// ── Terminal Toggle ──
+// ── Terminal Management ──
+
+interface TerminalInstance {
+	id: number;
+	shellName: string;
+	xterm: Terminal;
+	fitAddon: FitAddon;
+	tabEl: HTMLElement;
+	containerEl: HTMLElement;
+}
+
 const panelContainer = document.getElementById("panelContainer") as HTMLElement;
 const toggleTerminal = document.getElementById("toggleTerminal") as HTMLElement;
 const closePanelBtn = document.getElementById("closePanelBtn") as HTMLElement;
+const terminalContainer = document.getElementById("terminal") as HTMLElement;
+const terminalTabsEl = document.getElementById("terminalTabs") as HTMLElement;
+const shellSelect = document.getElementById("shellSelect") as HTMLSelectElement;
+const newTermBtn = document.getElementById("newTermBtn") as HTMLElement;
+
+const terminalInstances = new Map<number, TerminalInstance>();
+let activeTerminalId: number | null = null;
+let shellsLoaded = false;
+
+async function loadShells(): Promise<void> {
+	if (shellsLoaded) return;
+	const shells: ShellInfo[] = await electronAPI.listShells();
+	shellSelect.innerHTML = "";
+	for (const shell of shells) {
+		const opt = document.createElement("option");
+		opt.value = shell.path;
+		opt.textContent = shell.name;
+		shellSelect.appendChild(opt);
+	}
+	shellsLoaded = true;
+}
+
+async function createTerminalInstance(): Promise<void> {
+	await loadShells();
+	const shellPath = shellSelect.value;
+	const shellName =
+		shellSelect.options[shellSelect.selectedIndex]?.textContent || "Terminal";
+
+	const id = await electronAPI.spawnTerminal(shellPath);
+
+	const xterm = new Terminal({
+		theme: {
+			background: "#1e1e1e",
+			foreground: "#cccccc",
+			cursor: "#aeafad",
+			selectionBackground: "#264f78",
+			black: "#000000",
+			red: "#cd3131",
+			green: "#0dbc79",
+			yellow: "#e5e510",
+			blue: "#2472c8",
+			magenta: "#bc3fbc",
+			cyan: "#11a8cd",
+			white: "#e5e5e5",
+			brightBlack: "#666666",
+			brightRed: "#f14c4c",
+			brightGreen: "#23d18b",
+			brightYellow: "#f5f543",
+			brightBlue: "#3b8eea",
+			brightMagenta: "#d670d6",
+			brightCyan: "#29b8db",
+			brightWhite: "#e5e5e5",
+		},
+		fontFamily: "'Consolas', 'Courier New', monospace",
+		fontSize: 13,
+		cursorBlink: true,
+	});
+
+	const fitAddon = new FitAddon();
+	xterm.loadAddon(fitAddon);
+
+	// Create terminal container div
+	const containerEl = document.createElement("div");
+	containerEl.className = "xterm-instance";
+	containerEl.dataset.termId = String(id);
+	terminalContainer.appendChild(containerEl);
+
+	xterm.open(containerEl);
+	fitAddon.fit();
+
+	// Create terminal tab
+	const tabEl = document.createElement("div");
+	tabEl.className = "terminal-tab";
+	tabEl.dataset.termId = String(id);
+	tabEl.innerHTML = `<span class="terminal-tab-label">${shellName}</span><span class="terminal-tab-close">\u00D7</span>`;
+
+	tabEl.addEventListener("click", (e) => {
+		const target = e.target as HTMLElement;
+		if (target.classList.contains("terminal-tab-close")) {
+			killTerminalInstance(id);
+		} else {
+			activateTerminal(id);
+		}
+	});
+
+	terminalTabsEl.appendChild(tabEl);
+
+	// Wire IPC
+	xterm.onData((data) => {
+		electronAPI.writeTerminal(id, data);
+	});
+
+	const instance: TerminalInstance = {
+		id,
+		shellName,
+		xterm,
+		fitAddon,
+		tabEl,
+		containerEl,
+	};
+	terminalInstances.set(id, instance);
+	activateTerminal(id);
+}
+
+function activateTerminal(id: number): void {
+	activeTerminalId = id;
+
+	for (const [instId, inst] of terminalInstances) {
+		const isActive = instId === id;
+		inst.containerEl.classList.toggle("active", isActive);
+		inst.tabEl.classList.toggle("active", isActive);
+		if (isActive) {
+			inst.fitAddon.fit();
+			inst.xterm.focus();
+		}
+	}
+}
+
+function killTerminalInstance(id: number): void {
+	const inst = terminalInstances.get(id);
+	if (!inst) return;
+
+	electronAPI.killTerminal(id);
+	inst.xterm.dispose();
+	inst.tabEl.remove();
+	inst.containerEl.remove();
+	terminalInstances.delete(id);
+
+	// Activate another terminal or clear
+	if (activeTerminalId === id) {
+		const remaining = [...terminalInstances.keys()];
+		if (remaining.length > 0) {
+			activateTerminal(remaining[remaining.length - 1]);
+		} else {
+			activeTerminalId = null;
+		}
+	}
+}
+
+// Listen for PTY output
+electronAPI.onTerminalData((id, data) => {
+	const inst = terminalInstances.get(id);
+	if (inst) {
+		inst.xterm.write(data);
+	}
+});
+
+// Listen for PTY exit
+electronAPI.onTerminalExit((id) => {
+	const inst = terminalInstances.get(id);
+	if (inst) {
+		inst.xterm.dispose();
+		inst.tabEl.remove();
+		inst.containerEl.remove();
+		terminalInstances.delete(id);
+
+		if (activeTerminalId === id) {
+			const remaining = [...terminalInstances.keys()];
+			if (remaining.length > 0) {
+				activateTerminal(remaining[remaining.length - 1]);
+			} else {
+				activeTerminalId = null;
+			}
+		}
+	}
+});
+
+// New terminal button
+newTermBtn.addEventListener("click", () => {
+	createTerminalInstance();
+});
+
+// ── Terminal Toggle ──
+
+async function openTerminalPanel(): Promise<void> {
+	panelContainer.classList.add("open");
+	if (terminalInstances.size === 0) {
+		await createTerminalInstance();
+	} else if (activeTerminalId !== null) {
+		const inst = terminalInstances.get(activeTerminalId);
+		if (inst) {
+			inst.fitAddon.fit();
+			inst.xterm.focus();
+		}
+	}
+}
+
+function closeTerminalPanel(): void {
+	panelContainer.classList.remove("open");
+}
 
 toggleTerminal.addEventListener("click", () => {
-	panelContainer.classList.toggle("open");
+	if (panelContainer.classList.contains("open")) {
+		closeTerminalPanel();
+	} else {
+		openTerminalPanel();
+	}
 });
+
 closePanelBtn.addEventListener("click", () => {
-	panelContainer.classList.remove("open");
+	closeTerminalPanel();
 });
 
 document.addEventListener("keydown", (e) => {
 	if (e.ctrlKey && e.key === "`") {
 		e.preventDefault();
-		panelContainer.classList.toggle("open");
+		if (panelContainer.classList.contains("open")) {
+			closeTerminalPanel();
+		} else {
+			openTerminalPanel();
+		}
 	}
 });
 
@@ -393,12 +617,25 @@ document.addEventListener("mousemove", (e) => {
 	const newHeight = rect.bottom - e.clientY;
 	if (newHeight > 100 && newHeight < rect.height - 100) {
 		panelContainer.style.height = `${newHeight}px`;
+		// Re-fit active terminal on resize
+		if (activeTerminalId !== null) {
+			const inst = terminalInstances.get(activeTerminalId);
+			if (inst) inst.fitAddon.fit();
+		}
 	}
 });
 
 document.addEventListener("mouseup", () => {
 	isResizing = false;
 	document.body.style.cursor = "";
+});
+
+// Re-fit on window resize
+window.addEventListener("resize", () => {
+	if (activeTerminalId !== null) {
+		const inst = terminalInstances.get(activeTerminalId);
+		if (inst) inst.fitAddon.fit();
+	}
 });
 
 // ── Window Controls ──

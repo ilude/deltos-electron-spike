@@ -3,6 +3,7 @@
 <head>
   <meta charset="UTF-8">
   <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'">
+  <link rel="stylesheet" href="dist/xterm.css">
   <title>Deltos</title>
   <style>
     * { margin: 0; padding: 0; box-sizing: border-box; }
@@ -441,27 +442,71 @@
     .terminal {
       flex: 1;
       background: var(--bg-terminal);
-      padding: 8px 16px;
-      font-family: var(--font-mono);
-      font-size: 13px;
-      line-height: 20px;
-      overflow-y: auto;
+      overflow: hidden;
+      position: relative;
+    }
+    .xterm-instance {
+      display: none;
+      width: 100%;
+      height: 100%;
+      padding: 4px 0 0 4px;
+    }
+    .xterm-instance.active {
+      display: block;
+    }
+
+    /* Terminal tabs in panel header */
+    .terminal-tabs {
+      display: flex;
+      gap: 0;
+      height: 100%;
+      margin-left: 8px;
+    }
+    .terminal-tab {
+      padding: 0 8px;
+      height: 100%;
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      cursor: pointer;
+      color: var(--text-dim);
+      font-size: 12px;
+      border-bottom: 1px solid transparent;
+      margin-bottom: -1px;
+    }
+    .terminal-tab:hover { color: var(--text); }
+    .terminal-tab.active {
+      color: var(--text-bright);
+      border-bottom-color: var(--accent);
+    }
+    .terminal-tab-close {
+      font-size: 14px;
+      color: transparent;
+      cursor: pointer;
+      border-radius: 3px;
+      width: 16px;
+      height: 16px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+    }
+    .terminal-tab:hover .terminal-tab-close { color: var(--text-dim); }
+    .terminal-tab-close:hover { background: rgba(255,255,255,0.1); color: var(--text-bright) !important; }
+
+    /* Shell selector */
+    .shell-select {
+      background: var(--bg-input);
       color: var(--text);
+      border: 1px solid var(--border);
+      border-radius: 2px;
+      font-size: 11px;
+      padding: 1px 4px;
+      font-family: var(--font-ui);
+      outline: none;
+      cursor: pointer;
     }
-    .term-prompt { color: var(--terminal-green); }
-    .term-path { color: #569cd6; }
-    .term-dim { color: var(--text-dim); }
-    .terminal-cursor {
-      display: inline-block;
-      width: 7px;
-      height: 15px;
-      background: var(--terminal-cursor);
-      animation: blink 1s step-end infinite;
-      vertical-align: text-bottom;
-    }
-    @keyframes blink {
-      50% { opacity: 0; }
-    }
+    .shell-select:hover { border-color: var(--accent); }
+    .shell-select:focus { border-color: var(--accent); }
 
     /* ── Resize Handle ── */
     .resize-handle {
@@ -603,14 +648,14 @@
               <div class="panel-tab">Problems</div>
               <div class="panel-tab">Output</div>
             </div>
+            <div class="terminal-tabs" id="terminalTabs"></div>
             <div class="panel-actions">
-              <button title="New Terminal">+</button>
+              <select class="shell-select" id="shellSelect"></select>
+              <button title="New Terminal" id="newTermBtn">+</button>
               <button title="Close Panel" id="closePanelBtn">&times;</button>
             </div>
           </div>
-          <div class="terminal" id="terminal">
-            <div><span class="term-prompt">mglenn@deltos</span> <span class="term-path">~/projects/deltos</span> <span class="term-dim">$</span> <span class="terminal-cursor"></span></div>
-          </div>
+          <div class="terminal" id="terminal"></div>
         </div>
       </div>
     </div>
