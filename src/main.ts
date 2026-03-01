@@ -66,6 +66,17 @@ function detectShells(): ShellInfo[] {
 
 let cachedShells: ShellInfo[] | null = null;
 
+// ── Pre-spawned Terminal ──
+
+interface PreSpawnedTerminal {
+	id: number;
+	pty: pty.IPty;
+	shellPath: string;
+	bufferedData: string[];
+	bufferDisposable: { dispose(): void };
+}
+let preSpawnedTerminal: PreSpawnedTerminal | null = null;
+
 // ── PTY Management ──
 
 const terminals = new Map<number, pty.IPty>();
@@ -109,18 +120,53 @@ ipcMain.handle("terminal:list-shells", () => {
 });
 
 ipcMain.handle("terminal:spawn", (e, shellPath: string) => {
+	const sender = e.sender;
+	const terminalCwd =
+		process.env.HOME || process.env.USERPROFILE || projectRoot;
+
+	// Consume pre-spawned terminal if shell matches
+	if (preSpawnedTerminal && preSpawnedTerminal.shellPath === shellPath) {
+		const pre = preSpawnedTerminal;
+		preSpawnedTerminal = null;
+
+		pre.bufferDisposable.dispose();
+		terminals.set(pre.id, pre.pty);
+
+		pre.pty.onData((data) => {
+			if (!sender.isDestroyed()) {
+				sender.send("terminal:data", pre.id, data);
+			}
+		});
+
+		pre.pty.onExit(() => {
+			terminals.delete(pre.id);
+			if (!sender.isDestroyed()) {
+				sender.send("terminal:exit", pre.id);
+			}
+		});
+
+		// Replay buffered data
+		for (const chunk of pre.bufferedData) {
+			if (!sender.isDestroyed()) {
+				sender.send("terminal:data", pre.id, chunk);
+			}
+		}
+
+		return pre.id;
+	}
+
+	// Fresh spawn
 	const id = nextTerminalId++;
 	const shell = pty.spawn(shellPath, [], {
 		name: "xterm-256color",
 		cols: 80,
 		rows: 24,
-		cwd: process.env.HOME || process.env.USERPROFILE || projectRoot,
+		cwd: terminalCwd,
 		env: process.env as Record<string, string>,
 	});
 
 	terminals.set(id, shell);
 
-	const sender = e.sender;
 	shell.onData((data) => {
 		if (!sender.isDestroyed()) {
 			sender.send("terminal:data", id, data);
@@ -163,6 +209,34 @@ app.whenReady().then(() => {
 		`[Deltos Main] main-ready: ${mainReady}ms, window-created: ${windowCreated}ms`,
 	);
 
+	// Pre-spawn default terminal using first cached shell
+	if (cachedShells && cachedShells.length > 0) {
+		const defaultShell = cachedShells[0];
+		const terminalCwd =
+			process.env.HOME || process.env.USERPROFILE || projectRoot;
+		const id = nextTerminalId++;
+		const prePty = pty.spawn(defaultShell.path, [], {
+			name: "xterm-256color",
+			cols: 80,
+			rows: 24,
+			cwd: terminalCwd,
+			env: process.env as Record<string, string>,
+		});
+
+		const bufferedData: string[] = [];
+		const bufferDisposable = prePty.onData((data) => {
+			bufferedData.push(data);
+		});
+
+		preSpawnedTerminal = {
+			id,
+			pty: prePty,
+			shellPath: defaultShell.path,
+			bufferedData,
+			bufferDisposable,
+		};
+	}
+
 	app.on("activate", () => {
 		if (BrowserWindow.getAllWindows().length === 0) {
 			createWindow();
@@ -177,6 +251,10 @@ app.on("window-all-closed", () => {
 });
 
 app.on("will-quit", () => {
+	if (preSpawnedTerminal) {
+		preSpawnedTerminal.pty.kill();
+		preSpawnedTerminal = null;
+	}
 	for (const [id, term] of terminals) {
 		term.kill();
 		terminals.delete(id);
