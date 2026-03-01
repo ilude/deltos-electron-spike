@@ -12,6 +12,7 @@ declare const electronAPI: {
 	close: () => void;
 	platform: string;
 	appStartTime: number;
+	getCliArgs: () => Promise<{ directory: string | null; file: string | null }>;
 	listShells: () => Promise<ShellInfo[]>;
 	spawnTerminal: (shellPath: string) => Promise<number>;
 	writeTerminal: (id: number, data: string) => void;
@@ -963,5 +964,18 @@ requestAnimationFrame(() => {
 	perfMark("first-paint");
 	requestAnimationFrame(() => {
 		openTerminalPanel();
+
+		// Apply CLI args to titlebar
+		electronAPI.getCliArgs().then(({ directory, file }) => {
+			const titleEl = document.querySelector(".titlebar-title");
+			if (titleEl) {
+				if (file) {
+					titleEl.textContent = file;
+				} else if (directory) {
+					const dirName = directory.split(/[\\/]/).pop() || directory;
+					titleEl.textContent = dirName;
+				}
+			}
+		});
 	});
 });

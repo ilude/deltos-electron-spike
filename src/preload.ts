@@ -7,6 +7,12 @@ contextBridge.exposeInMainWorld("electronAPI", {
 	platform: process.platform,
 	appStartTime: Number(process.env.DELTOS_APP_START),
 
+	getCliArgs: () =>
+		ipcRenderer.invoke("app:get-cli-args") as Promise<{
+			directory: string | null;
+			file: string | null;
+		}>,
+
 	// Terminal API
 	listShells: () => ipcRenderer.invoke("terminal:list-shells"),
 	spawnTerminal: (shellPath: string) =>

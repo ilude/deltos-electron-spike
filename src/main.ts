@@ -11,6 +11,27 @@ const distDir = path.join(projectRoot, "dist");
 const isMac = process.platform === "darwin";
 const isWin = process.platform === "win32";
 
+// ── CLI Argument Parsing ──
+
+const cliArg =
+	process.argv.find((arg, i) => i >= 2 && !arg.startsWith("--")) ?? null;
+let cliDirectory: string | null = null;
+let cliFile: string | null = null;
+if (cliArg) {
+	const resolved = path.resolve(cliArg);
+	try {
+		const stat = fs.statSync(resolved);
+		if (stat.isDirectory()) {
+			cliDirectory = resolved;
+		} else if (stat.isFile()) {
+			cliFile = resolved;
+			cliDirectory = path.dirname(resolved);
+		}
+	} catch {
+		/* invalid path, ignore */
+	}
+}
+
 // ── Shell Detection ──
 
 interface ShellInfo {
@@ -115,6 +136,11 @@ ipcMain.on("window-close", (e) => {
 
 // ── Terminal IPC Handlers ──
 
+ipcMain.handle("app:get-cli-args", () => ({
+	directory: cliDirectory,
+	file: cliFile,
+}));
+
 ipcMain.handle("terminal:list-shells", () => {
 	return cachedShells ?? detectShells();
 });
@@ -122,7 +148,7 @@ ipcMain.handle("terminal:list-shells", () => {
 ipcMain.handle("terminal:spawn", (e, shellPath: string) => {
 	const sender = e.sender;
 	const terminalCwd =
-		process.env.HOME || process.env.USERPROFILE || projectRoot;
+		cliDirectory || process.env.HOME || process.env.USERPROFILE || projectRoot;
 
 	// Consume pre-spawned terminal if shell matches
 	if (preSpawnedTerminal && preSpawnedTerminal.shellPath === shellPath) {
