@@ -490,22 +490,48 @@
       overflow: hidden;
       position: relative;
     }
-    .xterm-instance {
+    .split-group {
       display: none;
+      flex-direction: row;
       width: 100%;
       height: 100%;
-      padding: 4px 0 0 4px;
     }
-    .xterm-instance.active {
-      display: block;
+    .split-group.active {
+      display: flex;
+    }
+    .xterm-instance {
+      flex: 1;
+      min-width: 80px;
+      height: 100%;
+      padding: 4px 0 0 4px;
+      overflow: hidden;
+    }
+    .split-divider {
+      width: 4px;
+      cursor: col-resize;
+      background: var(--border);
+      flex-shrink: 0;
+    }
+    .split-divider:hover {
+      background: var(--accent);
+    }
+
+    /* Terminal sidebar resize handle */
+    .terminal-sidebar-resize {
+      width: 4px;
+      cursor: col-resize;
+      background: transparent;
+      flex-shrink: 0;
+    }
+    .terminal-sidebar-resize:hover {
+      background: var(--accent);
     }
 
     /* Terminal sidebar (right-side instance list) */
     .terminal-sidebar {
       width: 160px;
-      min-width: 120px;
+      min-width: 60px;
       background: var(--bg-sidebar);
-      border-left: 1px solid var(--border);
       display: flex;
       flex-direction: column;
       overflow: hidden;
@@ -554,6 +580,17 @@
     }
     .terminal-list-item:hover .terminal-list-item-close { color: var(--text-dim); }
     .terminal-list-item-close:hover { background: rgba(255,255,255,0.1); color: var(--text-bright) !important; }
+
+    .terminal-list-group {
+      padding: 0;
+    }
+    .terminal-list-group.multi {
+      border-left: 2px solid var(--accent);
+      margin-left: 4px;
+    }
+    .terminal-list-group.multi .terminal-list-item {
+      padding-left: 12px;
+    }
 
     /* Shell selector */
     .shell-select {
@@ -745,13 +782,15 @@
             </div>
             <div class="panel-actions">
               <select class="shell-select" id="shellSelect"></select>
+              <button title="Split Terminal" id="splitTermBtn">&#x2E7C;</button>
               <button title="New Terminal" id="newTermBtn">+</button>
               <button title="Close Panel" id="closePanelBtn">&times;</button>
             </div>
           </div>
           <div class="terminal-body">
             <div class="terminal" id="terminal"></div>
-            <div class="terminal-sidebar">
+            <div class="terminal-sidebar-resize" id="termSidebarResize"></div>
+            <div class="terminal-sidebar" id="terminalSidebar">
               <div class="terminal-list" id="terminalList"></div>
             </div>
           </div>

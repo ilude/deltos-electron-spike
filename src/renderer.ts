@@ -374,12 +374,20 @@ for (const icon of document.querySelectorAll(".activitybar-icon")) {
 
 // ── Terminal Management ──
 
+interface SplitGroup {
+	id: number;
+	terminalIds: number[];
+	containerEl: HTMLElement;
+	sidebarGroupEl: HTMLElement;
+}
+
 interface TerminalInstance {
 	id: number;
+	splitGroupId: number;
 	shellName: string;
 	xterm: Terminal;
 	fitAddon: FitAddon;
-	tabEl: HTMLElement;
+	sidebarItemEl: HTMLElement;
 	containerEl: HTMLElement;
 }
 
@@ -390,9 +398,12 @@ const terminalContainer = document.getElementById("terminal") as HTMLElement;
 const terminalListEl = document.getElementById("terminalList") as HTMLElement;
 const shellSelect = document.getElementById("shellSelect") as HTMLSelectElement;
 const newTermBtn = document.getElementById("newTermBtn") as HTMLElement;
+const splitTermBtn = document.getElementById("splitTermBtn") as HTMLElement;
 
 const terminalInstances = new Map<number, TerminalInstance>();
-let activeTerminalId: number | null = null;
+const splitGroups = new Map<number, SplitGroup>();
+let activeSplitGroupId: number | null = null;
+let nextSplitGroupId = 1;
 let shellsLoaded = false;
 
 async function loadShells(): Promise<void> {
@@ -408,7 +419,58 @@ async function loadShells(): Promise<void> {
 	shellsLoaded = true;
 }
 
-async function createTerminalInstance(): Promise<void> {
+function fitAllInGroup(groupId: number): void {
+	const group = splitGroups.get(groupId);
+	if (!group) return;
+	for (const termId of group.terminalIds) {
+		const inst = terminalInstances.get(termId);
+		if (inst) {
+			inst.fitAddon.fit();
+		}
+	}
+}
+
+function updateSidebarGroupStyle(groupId: number): void {
+	const group = splitGroups.get(groupId);
+	if (!group) return;
+	group.sidebarGroupEl.classList.toggle("multi", group.terminalIds.length > 1);
+}
+
+function activateSplitGroup(groupId: number): void {
+	activeSplitGroupId = groupId;
+
+	// Toggle group visibility
+	for (const [gId, g] of splitGroups) {
+		g.containerEl.classList.toggle("active", gId === groupId);
+	}
+
+	// Toggle sidebar item highlighting
+	for (const [, inst] of terminalInstances) {
+		inst.sidebarItemEl.classList.toggle(
+			"active",
+			inst.splitGroupId === groupId,
+		);
+	}
+
+	// Fit terminals after layout settles
+	requestAnimationFrame(() => {
+		fitAllInGroup(groupId);
+		// Focus the first terminal in the group
+		const group = splitGroups.get(groupId);
+		if (group && group.terminalIds.length > 0) {
+			const first = terminalInstances.get(group.terminalIds[0]);
+			if (first) first.xterm.focus();
+		}
+	});
+}
+
+function activateTerminal(id: number): void {
+	const inst = terminalInstances.get(id);
+	if (!inst) return;
+	activateSplitGroup(inst.splitGroupId);
+}
+
+async function createTerminalInstance(targetGroupId?: number): Promise<void> {
 	await loadShells();
 	const shellPath = shellSelect.value;
 	const shellName =
@@ -447,22 +509,55 @@ async function createTerminalInstance(): Promise<void> {
 	const fitAddon = new FitAddon();
 	xterm.loadAddon(fitAddon);
 
-	// Create terminal container div
+	let groupId: number;
+	let group: SplitGroup;
+
+	if (targetGroupId != null && splitGroups.has(targetGroupId)) {
+		// Add to existing group — insert divider then pane
+		groupId = targetGroupId;
+		group = splitGroups.get(groupId) as SplitGroup;
+
+		const divider = document.createElement("div");
+		divider.className = "split-divider";
+		group.containerEl.appendChild(divider);
+		setupSplitDividerDrag(divider, groupId);
+	} else {
+		// Create new group
+		groupId = nextSplitGroupId++;
+		const groupEl = document.createElement("div");
+		groupEl.className = "split-group";
+		groupEl.dataset.groupId = String(groupId);
+		terminalContainer.appendChild(groupEl);
+
+		const sidebarGroupEl = document.createElement("div");
+		sidebarGroupEl.className = "terminal-list-group";
+		sidebarGroupEl.dataset.groupId = String(groupId);
+		terminalListEl.appendChild(sidebarGroupEl);
+
+		group = {
+			id: groupId,
+			terminalIds: [],
+			containerEl: groupEl,
+			sidebarGroupEl,
+		};
+		splitGroups.set(groupId, group);
+	}
+
+	// Create xterm container
 	const containerEl = document.createElement("div");
 	containerEl.className = "xterm-instance";
 	containerEl.dataset.termId = String(id);
-	terminalContainer.appendChild(containerEl);
+	group.containerEl.appendChild(containerEl);
 
 	xterm.open(containerEl);
-	fitAddon.fit();
 
-	// Create terminal list item
-	const tabEl = document.createElement("div");
-	tabEl.className = "terminal-list-item";
-	tabEl.dataset.termId = String(id);
-	tabEl.innerHTML = `<span class="terminal-list-item-icon">&#9638;</span><span class="terminal-list-item-label">${shellName}</span><span class="terminal-list-item-close">\u00D7</span>`;
+	// Create sidebar list item
+	const sidebarItemEl = document.createElement("div");
+	sidebarItemEl.className = "terminal-list-item";
+	sidebarItemEl.dataset.termId = String(id);
+	sidebarItemEl.innerHTML = `<span class="terminal-list-item-icon">&#9638;</span><span class="terminal-list-item-label">${shellName}</span><span class="terminal-list-item-close">\u00D7</span>`;
 
-	tabEl.addEventListener("click", (e) => {
+	sidebarItemEl.addEventListener("click", (e) => {
 		const target = e.target as HTMLElement;
 		if (target.classList.contains("terminal-list-item-close")) {
 			killTerminalInstance(id);
@@ -471,58 +566,88 @@ async function createTerminalInstance(): Promise<void> {
 		}
 	});
 
-	terminalListEl.appendChild(tabEl);
+	group.sidebarGroupEl.appendChild(sidebarItemEl);
 
 	// Wire IPC
 	xterm.onData((data) => {
 		electronAPI.writeTerminal(id, data);
 	});
 
+	// Wire resize to PTY
+	xterm.onResize(({ cols, rows }) => {
+		electronAPI.resizeTerminal(id, cols, rows);
+	});
+
 	const instance: TerminalInstance = {
 		id,
+		splitGroupId: groupId,
 		shellName,
 		xterm,
 		fitAddon,
-		tabEl,
+		sidebarItemEl,
 		containerEl,
 	};
 	terminalInstances.set(id, instance);
-	activateTerminal(id);
+
+	group.terminalIds.push(id);
+	updateSidebarGroupStyle(groupId);
+	activateSplitGroup(groupId);
 }
 
-function activateTerminal(id: number): void {
-	activeTerminalId = id;
+function removeTerminalFromGroup(id: number): void {
+	const inst = terminalInstances.get(id);
+	if (!inst) return;
 
-	for (const [instId, inst] of terminalInstances) {
-		const isActive = instId === id;
-		inst.containerEl.classList.toggle("active", isActive);
-		inst.tabEl.classList.toggle("active", isActive);
-		if (isActive) {
-			inst.fitAddon.fit();
-			inst.xterm.focus();
+	const group = splitGroups.get(inst.splitGroupId);
+	if (!group) return;
+
+	// Dispose xterm and remove DOM
+	inst.xterm.dispose();
+	inst.sidebarItemEl.remove();
+
+	// Remove the xterm container and adjacent divider
+	const children = Array.from(group.containerEl.children);
+	const idx = children.indexOf(inst.containerEl);
+	if (idx > 0 && children[idx - 1]?.classList.contains("split-divider")) {
+		children[idx - 1].remove();
+	} else if (
+		idx === 0 &&
+		children[idx + 1]?.classList.contains("split-divider")
+	) {
+		children[idx + 1].remove();
+	}
+	inst.containerEl.remove();
+
+	// Update group state
+	group.terminalIds = group.terminalIds.filter((tid) => tid !== id);
+	terminalInstances.delete(id);
+	updateSidebarGroupStyle(group.id);
+
+	// If group is empty, remove it entirely
+	if (group.terminalIds.length === 0) {
+		group.containerEl.remove();
+		group.sidebarGroupEl.remove();
+		splitGroups.delete(group.id);
+
+		if (activeSplitGroupId === group.id) {
+			const remaining = [...splitGroups.keys()];
+			if (remaining.length > 0) {
+				activateSplitGroup(remaining[remaining.length - 1]);
+			} else {
+				activeSplitGroupId = null;
+			}
+		}
+	} else {
+		// Re-fit remaining terminals
+		if (activeSplitGroupId === group.id) {
+			requestAnimationFrame(() => fitAllInGroup(group.id));
 		}
 	}
 }
 
 function killTerminalInstance(id: number): void {
-	const inst = terminalInstances.get(id);
-	if (!inst) return;
-
 	electronAPI.killTerminal(id);
-	inst.xterm.dispose();
-	inst.tabEl.remove();
-	inst.containerEl.remove();
-	terminalInstances.delete(id);
-
-	// Activate another terminal or clear
-	if (activeTerminalId === id) {
-		const remaining = [...terminalInstances.keys()];
-		if (remaining.length > 0) {
-			activateTerminal(remaining[remaining.length - 1]);
-		} else {
-			activeTerminalId = null;
-		}
-	}
+	removeTerminalFromGroup(id);
 }
 
 // Listen for PTY output
@@ -535,27 +660,69 @@ electronAPI.onTerminalData((id, data) => {
 
 // Listen for PTY exit
 electronAPI.onTerminalExit((id) => {
-	const inst = terminalInstances.get(id);
-	if (inst) {
-		inst.xterm.dispose();
-		inst.tabEl.remove();
-		inst.containerEl.remove();
-		terminalInstances.delete(id);
-
-		if (activeTerminalId === id) {
-			const remaining = [...terminalInstances.keys()];
-			if (remaining.length > 0) {
-				activateTerminal(remaining[remaining.length - 1]);
-			} else {
-				activeTerminalId = null;
-			}
-		}
-	}
+	removeTerminalFromGroup(id);
 });
 
-// New terminal button
+// Split divider drag
+function setupSplitDividerDrag(divider: HTMLElement, groupId: number): void {
+	let isDragging = false;
+	let startX = 0;
+	let leftPane: HTMLElement | null = null;
+	let rightPane: HTMLElement | null = null;
+	let leftStartWidth = 0;
+	let rightStartWidth = 0;
+
+	divider.addEventListener("mousedown", (e) => {
+		isDragging = true;
+		startX = e.clientX;
+
+		leftPane = divider.previousElementSibling as HTMLElement | null;
+		rightPane = divider.nextElementSibling as HTMLElement | null;
+
+		if (leftPane) leftStartWidth = leftPane.getBoundingClientRect().width;
+		if (rightPane) rightStartWidth = rightPane.getBoundingClientRect().width;
+
+		document.body.style.cursor = "col-resize";
+		e.preventDefault();
+	});
+
+	document.addEventListener("mousemove", (e) => {
+		if (!isDragging) return;
+		const delta = e.clientX - startX;
+
+		if (leftPane && rightPane) {
+			const newLeft = leftStartWidth + delta;
+			const newRight = rightStartWidth - delta;
+
+			if (newLeft >= 80 && newRight >= 80) {
+				leftPane.style.flex = "none";
+				rightPane.style.flex = "none";
+				leftPane.style.width = `${newLeft}px`;
+				rightPane.style.width = `${newRight}px`;
+			}
+		}
+	});
+
+	document.addEventListener("mouseup", () => {
+		if (!isDragging) return;
+		isDragging = false;
+		document.body.style.cursor = "";
+		fitAllInGroup(groupId);
+	});
+}
+
+// New terminal button (new group)
 newTermBtn.addEventListener("click", () => {
 	createTerminalInstance();
+});
+
+// Split terminal button (add to current group)
+splitTermBtn.addEventListener("click", () => {
+	if (activeSplitGroupId != null) {
+		createTerminalInstance(activeSplitGroupId);
+	} else {
+		createTerminalInstance();
+	}
 });
 
 // ── Terminal Toggle ──
@@ -564,12 +731,16 @@ async function openTerminalPanel(): Promise<void> {
 	panelContainer.classList.add("open");
 	if (terminalInstances.size === 0) {
 		await createTerminalInstance();
-	} else if (activeTerminalId !== null) {
-		const inst = terminalInstances.get(activeTerminalId);
-		if (inst) {
-			inst.fitAddon.fit();
-			inst.xterm.focus();
-		}
+	} else if (activeSplitGroupId !== null) {
+		const gId = activeSplitGroupId;
+		requestAnimationFrame(() => {
+			fitAllInGroup(gId);
+			const group = splitGroups.get(gId);
+			if (group && group.terminalIds.length > 0) {
+				const first = terminalInstances.get(group.terminalIds[0]);
+				if (first) first.xterm.focus();
+			}
+		});
 	}
 }
 
@@ -610,31 +781,65 @@ resizeHandle.addEventListener("mousedown", (e) => {
 	e.preventDefault();
 });
 
+// ── Terminal Sidebar Resize ──
+const termSidebarResize = document.getElementById(
+	"termSidebarResize",
+) as HTMLElement;
+const terminalSidebar = document.getElementById(
+	"terminalSidebar",
+) as HTMLElement;
+let isSidebarResizing = false;
+let sidebarStartX = 0;
+let sidebarStartWidth = 0;
+
+termSidebarResize.addEventListener("mousedown", (e) => {
+	isSidebarResizing = true;
+	sidebarStartX = e.clientX;
+	sidebarStartWidth = terminalSidebar.getBoundingClientRect().width;
+	document.body.style.cursor = "col-resize";
+	e.preventDefault();
+});
+
 document.addEventListener("mousemove", (e) => {
-	if (!isResizing) return;
-	const editorArea = document.querySelector(".editor-area") as HTMLElement;
-	const rect = editorArea.getBoundingClientRect();
-	const newHeight = rect.bottom - e.clientY;
-	if (newHeight > 100 && newHeight < rect.height - 100) {
-		panelContainer.style.height = `${newHeight}px`;
-		// Re-fit active terminal on resize
-		if (activeTerminalId !== null) {
-			const inst = terminalInstances.get(activeTerminalId);
-			if (inst) inst.fitAddon.fit();
+	if (isResizing) {
+		const editorArea = document.querySelector(".editor-area") as HTMLElement;
+		const rect = editorArea.getBoundingClientRect();
+		const newHeight = rect.bottom - e.clientY;
+		if (newHeight > 100 && newHeight < rect.height - 100) {
+			panelContainer.style.height = `${newHeight}px`;
+			if (activeSplitGroupId !== null) {
+				fitAllInGroup(activeSplitGroupId);
+			}
+		}
+	}
+	if (isSidebarResizing) {
+		// Dragging left makes sidebar wider (sidebar is on the right)
+		const delta = sidebarStartX - e.clientX;
+		const newWidth = sidebarStartWidth + delta;
+		if (newWidth >= 60 && newWidth <= 400) {
+			terminalSidebar.style.width = `${newWidth}px`;
 		}
 	}
 });
 
 document.addEventListener("mouseup", () => {
-	isResizing = false;
-	document.body.style.cursor = "";
+	if (isSidebarResizing) {
+		isSidebarResizing = false;
+		document.body.style.cursor = "";
+		if (activeSplitGroupId !== null) {
+			fitAllInGroup(activeSplitGroupId);
+		}
+	}
+	if (isResizing) {
+		isResizing = false;
+		document.body.style.cursor = "";
+	}
 });
 
 // Re-fit on window resize
 window.addEventListener("resize", () => {
-	if (activeTerminalId !== null) {
-		const inst = terminalInstances.get(activeTerminalId);
-		if (inst) inst.fitAddon.fit();
+	if (activeSplitGroupId !== null) {
+		fitAllInGroup(activeSplitGroupId);
 	}
 });
 
