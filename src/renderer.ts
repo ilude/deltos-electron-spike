@@ -717,6 +717,13 @@ document.addEventListener("keydown", (e) => {
 	if (e.key === "Escape") closeAllMenus();
 });
 
+// ── Menu actions ──
+document.getElementById("menuNewTerminal")?.addEventListener("click", () => {
+	closeAllMenus();
+	openTerminalPanel();
+	createTerminalInstance();
+});
+
 // ── Open App.tsx by default ──
 openFile("App.tsx");
 
