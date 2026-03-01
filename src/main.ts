@@ -62,6 +62,10 @@ function detectShells(): ShellInfo[] {
 	return shells;
 }
 
+// ── Shell Cache ──
+
+let cachedShells: ShellInfo[] | null = null;
+
 // ── PTY Management ──
 
 const terminals = new Map<number, pty.IPty>();
@@ -101,7 +105,7 @@ ipcMain.on("window-close", (e) => {
 // ── Terminal IPC Handlers ──
 
 ipcMain.handle("terminal:list-shells", () => {
-	return detectShells();
+	return cachedShells ?? detectShells();
 });
 
 ipcMain.handle("terminal:spawn", (e, shellPath: string) => {
@@ -152,6 +156,7 @@ ipcMain.on("terminal:kill", (_e, id: number) => {
 app.whenReady().then(() => {
 	process.env.DELTOS_APP_START = String(APP_START);
 	const mainReady = Date.now() - APP_START;
+	cachedShells = detectShells();
 	createWindow();
 	const windowCreated = Date.now() - APP_START;
 	console.log(
