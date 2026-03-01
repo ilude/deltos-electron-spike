@@ -6,12 +6,8 @@ contextBridge.exposeInMainWorld("electronAPI", {
 	close: () => ipcRenderer.send("window-close"),
 	platform: process.platform,
 	appStartTime: Number(process.env.DELTOS_APP_START),
-
-	getCliArgs: () =>
-		ipcRenderer.invoke("app:get-cli-args") as Promise<{
-			directory: string | null;
-			file: string | null;
-		}>,
+	cliDirectory: process.env.DELTOS_CLI_DIR || null,
+	cliFile: process.env.DELTOS_CLI_FILE || null,
 
 	// Terminal API
 	listShells: () => ipcRenderer.invoke("terminal:list-shells"),
@@ -37,4 +33,12 @@ contextBridge.exposeInMainWorld("electronAPI", {
 		ipcRenderer.on("terminal:exit", listener);
 		return () => ipcRenderer.removeListener("terminal:exit", listener);
 	},
+
+	// Filesystem API
+	readDirectory: (dirPath: string) =>
+		ipcRenderer.invoke("fs:readDirectory", dirPath),
+	readFile: (filePath: string) =>
+		ipcRenderer.invoke("fs:readFile", filePath),
+	writeFile: (filePath: string, content: string) =>
+		ipcRenderer.invoke("fs:writeFile", filePath, content),
 });

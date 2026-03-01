@@ -89,12 +89,15 @@ let cachedShells: ShellInfo[] | null = null;
 
 // ── Pre-spawned Terminal ──
 
+const PRE_SPAWN_BUFFER_MAX = 64 * 1024; // 64 KB cap
+
 interface PreSpawnedTerminal {
 	id: number;
 	pty: pty.IPty;
 	shellPath: string;
 	bufferedData: string[];
-	bufferDisposable: { dispose(): void };
+	bufferedBytes: number;
+	bufferDisposable: pty.IDisposable;
 }
 let preSpawnedTerminal: PreSpawnedTerminal | null = null;
 
@@ -102,6 +105,37 @@ let preSpawnedTerminal: PreSpawnedTerminal | null = null;
 
 const terminals = new Map<number, pty.IPty>();
 let nextTerminalId = 1;
+
+const terminalCwd =
+	cliDirectory || process.env.HOME || process.env.USERPROFILE || projectRoot;
+
+function spawnPty(shellPath: string, cwd: string): pty.IPty {
+	return pty.spawn(shellPath, [], {
+		name: "xterm-256color",
+		cols: 80,
+		rows: 24,
+		cwd,
+		env: process.env as Record<string, string>,
+	});
+}
+
+function wirePty(
+	instance: pty.IPty,
+	id: number,
+	sender: Electron.WebContents,
+): void {
+	instance.onData((data) => {
+		if (!sender.isDestroyed()) {
+			sender.send("terminal:data", id, data);
+		}
+	});
+	instance.onExit(() => {
+		terminals.delete(id);
+		if (!sender.isDestroyed()) {
+			sender.send("terminal:exit", id);
+		}
+	});
+}
 
 function createWindow(): void {
 	const win = new BrowserWindow({
@@ -147,8 +181,6 @@ ipcMain.handle("terminal:list-shells", () => {
 
 ipcMain.handle("terminal:spawn", (e, shellPath: string) => {
 	const sender = e.sender;
-	const terminalCwd =
-		cliDirectory || process.env.HOME || process.env.USERPROFILE || projectRoot;
 
 	// Consume pre-spawned terminal if shell matches
 	if (preSpawnedTerminal && preSpawnedTerminal.shellPath === shellPath) {
@@ -157,19 +189,7 @@ ipcMain.handle("terminal:spawn", (e, shellPath: string) => {
 
 		pre.bufferDisposable.dispose();
 		terminals.set(pre.id, pre.pty);
-
-		pre.pty.onData((data) => {
-			if (!sender.isDestroyed()) {
-				sender.send("terminal:data", pre.id, data);
-			}
-		});
-
-		pre.pty.onExit(() => {
-			terminals.delete(pre.id);
-			if (!sender.isDestroyed()) {
-				sender.send("terminal:exit", pre.id);
-			}
-		});
+		wirePty(pre.pty, pre.id, sender);
 
 		// Replay buffered data
 		for (const chunk of pre.bufferedData) {
@@ -183,28 +203,10 @@ ipcMain.handle("terminal:spawn", (e, shellPath: string) => {
 
 	// Fresh spawn
 	const id = nextTerminalId++;
-	const shell = pty.spawn(shellPath, [], {
-		name: "xterm-256color",
-		cols: 80,
-		rows: 24,
-		cwd: terminalCwd,
-		env: process.env as Record<string, string>,
-	});
+	const shell = spawnPty(shellPath, terminalCwd);
 
 	terminals.set(id, shell);
-
-	shell.onData((data) => {
-		if (!sender.isDestroyed()) {
-			sender.send("terminal:data", id, data);
-		}
-	});
-
-	shell.onExit(() => {
-		terminals.delete(id);
-		if (!sender.isDestroyed()) {
-			sender.send("terminal:exit", id);
-		}
-	});
+	wirePty(shell, id, sender);
 
 	return id;
 });
@@ -225,8 +227,67 @@ ipcMain.on("terminal:kill", (_e, id: number) => {
 	}
 });
 
+// ── Filesystem IPC Handlers ──
+
+const ALLOWED_DOTFILES = new Set([".gitignore", ".env.example", ".editorconfig", ".prettierrc", ".eslintrc"]);
+
+ipcMain.handle("fs:readDirectory", async (_e, dirPath: string) => {
+	const entries = await fs.promises.readdir(dirPath, { withFileTypes: true });
+	const result: { name: string; type: "file" | "directory" }[] = [];
+
+	for (const entry of entries) {
+		if (entry.name.startsWith(".") && !ALLOWED_DOTFILES.has(entry.name)) continue;
+		result.push({
+			name: entry.name,
+			type: entry.isDirectory() ? "directory" : "file",
+		});
+	}
+
+	result.sort((a, b) => {
+		if (a.type !== b.type) return a.type === "directory" ? -1 : 1;
+		return a.name.localeCompare(b.name, undefined, { sensitivity: "base" });
+	});
+
+	return result;
+});
+
+const MAX_FILE_SIZE = 5 * 1024 * 1024; // 5MB
+
+ipcMain.handle("fs:readFile", async (_e, filePath: string) => {
+	try {
+		const stat = await fs.promises.stat(filePath);
+		if (stat.size > MAX_FILE_SIZE) {
+			return { content: null, isBinary: true };
+		}
+
+		const buffer = await fs.promises.readFile(filePath);
+		// Check first 8KB for null bytes (binary detection)
+		const checkLength = Math.min(buffer.length, 8192);
+		for (let i = 0; i < checkLength; i++) {
+			if (buffer[i] === 0) {
+				return { content: null, isBinary: true };
+			}
+		}
+
+		return { content: buffer.toString("utf-8"), isBinary: false };
+	} catch {
+		return { content: null, isBinary: false };
+	}
+});
+
+ipcMain.handle("fs:writeFile", async (_e, filePath: string, content: string) => {
+	try {
+		await fs.promises.writeFile(filePath, content, "utf-8");
+		return { success: true };
+	} catch (err: unknown) {
+		return { success: false, error: err instanceof Error ? err.message : String(err) };
+	}
+});
+
 app.whenReady().then(() => {
 	process.env.DELTOS_APP_START = String(APP_START);
+	process.env.DELTOS_CLI_DIR = cliDirectory ?? "";
+	process.env.DELTOS_CLI_FILE = cliFile ?? "";
 	const mainReady = Date.now() - APP_START;
 	cachedShells = detectShells();
 	createWindow();
@@ -238,20 +299,23 @@ app.whenReady().then(() => {
 	// Pre-spawn default terminal using first cached shell
 	if (cachedShells && cachedShells.length > 0) {
 		const defaultShell = cachedShells[0];
-		const terminalCwd =
-			cliDirectory || process.env.HOME || process.env.USERPROFILE || projectRoot;
 		const id = nextTerminalId++;
-		const prePty = pty.spawn(defaultShell.path, [], {
-			name: "xterm-256color",
-			cols: 80,
-			rows: 24,
-			cwd: terminalCwd,
-			env: process.env as Record<string, string>,
-		});
+		const prePty = spawnPty(defaultShell.path, terminalCwd);
 
 		const bufferedData: string[] = [];
+		let bufferedBytes = 0;
 		const bufferDisposable = prePty.onData((data) => {
-			bufferedData.push(data);
+			if (bufferedBytes < PRE_SPAWN_BUFFER_MAX) {
+				bufferedData.push(data);
+				bufferedBytes += data.length;
+			}
+		});
+
+		// Clean up if shell exits before renderer consumes it
+		prePty.onExit(() => {
+			if (preSpawnedTerminal?.id === id) {
+				preSpawnedTerminal = null;
+			}
 		});
 
 		preSpawnedTerminal = {
@@ -259,6 +323,7 @@ app.whenReady().then(() => {
 			pty: prePty,
 			shellPath: defaultShell.path,
 			bufferedData,
+			bufferedBytes,
 			bufferDisposable,
 		};
 	}

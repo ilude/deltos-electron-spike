@@ -1,9 +1,24 @@
 import { FitAddon } from "@xterm/addon-fit";
 import { Terminal } from "@xterm/xterm";
+import { EditorState } from "@codemirror/state";
+import { EditorView, keymap } from "@codemirror/view";
+import { basicSetup } from "codemirror";
+import { HighlightStyle, syntaxHighlighting } from "@codemirror/language";
+import { tags } from "@lezer/highlight";
+import { javascript } from "@codemirror/lang-javascript";
+import { html } from "@codemirror/lang-html";
+import { css } from "@codemirror/lang-css";
+import { json } from "@codemirror/lang-json";
+import { markdown } from "@codemirror/lang-markdown";
 
 interface ShellInfo {
 	name: string;
 	path: string;
+}
+
+interface DirEntry {
+	name: string;
+	type: "file" | "directory";
 }
 
 declare const electronAPI: {
@@ -12,7 +27,8 @@ declare const electronAPI: {
 	close: () => void;
 	platform: string;
 	appStartTime: number;
-	getCliArgs: () => Promise<{ directory: string | null; file: string | null }>;
+	cliDirectory: string | null;
+	cliFile: string | null;
 	listShells: () => Promise<ShellInfo[]>;
 	spawnTerminal: (shellPath: string) => Promise<number>;
 	writeTerminal: (id: number, data: string) => void;
@@ -20,6 +36,9 @@ declare const electronAPI: {
 	killTerminal: (id: number) => void;
 	onTerminalData: (callback: (id: number, data: string) => void) => () => void;
 	onTerminalExit: (callback: (id: number) => void) => () => void;
+	readDirectory: (dirPath: string) => Promise<DirEntry[]>;
+	readFile: (filePath: string) => Promise<{ content: string | null; isBinary: boolean }>;
+	writeFile: (filePath: string, content: string) => Promise<{ success: boolean; error?: string }>;
 };
 
 // ── Startup Timing ──
@@ -37,199 +56,102 @@ function logStartupTimings(): void {
 
 perfMark("renderer-start");
 
+// ── Path Helpers ──
+const isWindows = electronAPI.platform === "win32";
+const pathSep = isWindows ? "\\" : "/";
+
+function joinPath(base: string, name: string): string {
+	if (base.endsWith("/") || base.endsWith("\\")) return base + name;
+	return base + pathSep + name;
+}
+
+function baseName(fullPath: string): string {
+	const parts = fullPath.split(/[\\/]/);
+	return parts[parts.length - 1] || fullPath;
+}
+
+// ── Root Directory ──
+const rootDirectory = electronAPI.cliDirectory || ".";
+
+// ── File Tree ──
+
 interface TreeNode {
 	name: string;
-	type: "folder" | "file";
-	lang?: string;
+	fullPath: string;
+	type: "directory" | "file";
+	loaded: boolean;
 	children?: TreeNode[];
 }
 
-// ── File tree data ──
-const fileTreeData: TreeNode[] = [
-	{ name: ".git", type: "folder", children: [] },
-	{
-		name: "node_modules",
-		type: "folder",
-		children: [{ name: ".package-lock.json", type: "file", lang: "json" }],
-	},
-	{
-		name: "src",
-		type: "folder",
-		children: [
-			{
-				name: "components",
-				type: "folder",
-				children: [
-					{ name: "App.tsx", type: "file", lang: "ts" },
-					{ name: "Editor.tsx", type: "file", lang: "ts" },
-					{ name: "FileTree.tsx", type: "file", lang: "ts" },
-					{ name: "StatusBar.tsx", type: "file", lang: "ts" },
-					{ name: "Terminal.tsx", type: "file", lang: "ts" },
-				],
-			},
-			{
-				name: "styles",
-				type: "folder",
-				children: [
-					{ name: "global.css", type: "file", lang: "css" },
-					{ name: "theme.css", type: "file", lang: "css" },
-				],
-			},
-			{ name: "index.ts", type: "file", lang: "ts" },
-			{ name: "main.ts", type: "file", lang: "ts" },
-		],
-	},
-	{ name: ".gitignore", type: "file", lang: "git" },
-	{ name: "index.html", type: "file", lang: "html" },
-	{ name: "package.json", type: "file", lang: "json" },
-	{ name: "README.md", type: "file", lang: "md" },
-	{ name: "tsconfig.json", type: "file", lang: "json" },
-];
-
-// ── Sample file contents ──
-const fileContents: Record<string, string[]> = {
-	"App.tsx": [
-		'<span class="syn-keyword">import</span> React <span class="syn-keyword">from</span> <span class="syn-string">\'react\'</span>;',
-		'<span class="syn-keyword">import</span> { Editor } <span class="syn-keyword">from</span> <span class="syn-string">\'./Editor\'</span>;',
-		'<span class="syn-keyword">import</span> { FileTree } <span class="syn-keyword">from</span> <span class="syn-string">\'./FileTree\'</span>;',
-		'<span class="syn-keyword">import</span> { StatusBar } <span class="syn-keyword">from</span> <span class="syn-string">\'./StatusBar\'</span>;',
-		'<span class="syn-keyword">import</span> { Terminal } <span class="syn-keyword">from</span> <span class="syn-string">\'./Terminal\'</span>;',
-		"",
-		'<span class="syn-keyword">interface</span> <span class="syn-type">AppProps</span> {',
-		'  <span class="syn-attr">theme</span>: <span class="syn-string">\'dark\'</span> | <span class="syn-string">\'light\'</span>;',
-		"}",
-		"",
-		'<span class="syn-keyword">export const</span> <span class="syn-function">App</span>: <span class="syn-type">React.FC</span>&lt;<span class="syn-type">AppProps</span>&gt; = ({ theme }) =&gt; {',
-		'  <span class="syn-keyword">const</span> [activeFile, setActiveFile] = <span class="syn-function">useState</span>&lt;<span class="syn-type">string</span> | <span class="syn-type">null</span>&gt;(<span class="syn-keyword">null</span>);',
-		'  <span class="syn-keyword">const</span> [openFiles, setOpenFiles] = <span class="syn-function">useState</span>&lt;<span class="syn-type">string</span>[]&gt;([]);',
-		'  <span class="syn-keyword">const</span> [terminalOpen, setTerminalOpen] = <span class="syn-function">useState</span>(<span class="syn-keyword">false</span>);',
-		"",
-		'  <span class="syn-keyword">return</span> (',
-		'    &lt;<span class="syn-tag">div</span> <span class="syn-attr">className</span>=<span class="syn-string">"app-container"</span>&gt;',
-		'      &lt;<span class="syn-tag">FileTree</span> <span class="syn-attr">onSelect</span>={setActiveFile} /&gt;',
-		'      &lt;<span class="syn-tag">Editor</span> <span class="syn-attr">file</span>={activeFile} /&gt;',
-		'      {terminalOpen &amp;&amp; &lt;<span class="syn-tag">Terminal</span> /&gt;}',
-		'      &lt;<span class="syn-tag">StatusBar</span> <span class="syn-attr">file</span>={activeFile} /&gt;',
-		'    &lt;/<span class="syn-tag">div</span>&gt;',
-		"  );",
-		"};",
-	],
-	"Editor.tsx": [
-		'<span class="syn-keyword">import</span> React <span class="syn-keyword">from</span> <span class="syn-string">\'react\'</span>;',
-		"",
-		'<span class="syn-keyword">interface</span> <span class="syn-type">EditorProps</span> {',
-		'  <span class="syn-attr">file</span>: <span class="syn-type">string</span> | <span class="syn-type">null</span>;',
-		'  <span class="syn-attr">content</span>?: <span class="syn-type">string</span>;',
-		"}",
-		"",
-		'<span class="syn-keyword">export const</span> <span class="syn-function">Editor</span>: <span class="syn-type">React.FC</span>&lt;<span class="syn-type">EditorProps</span>&gt; = ({ file, content }) =&gt; {',
-		'  <span class="syn-keyword">if</span> (!file) {',
-		'    <span class="syn-keyword">return</span> &lt;<span class="syn-tag">div</span> <span class="syn-attr">className</span>=<span class="syn-string">"welcome"</span>&gt;Select a file&lt;/<span class="syn-tag">div</span>&gt;;',
-		"  }",
-		"",
-		'  <span class="syn-keyword">return</span> (',
-		'    &lt;<span class="syn-tag">div</span> <span class="syn-attr">className</span>=<span class="syn-string">"editor-pane"</span>&gt;',
-		'      &lt;<span class="syn-tag">pre</span>&gt;{content}&lt;/<span class="syn-tag">pre</span>&gt;',
-		'    &lt;/<span class="syn-tag">div</span>&gt;',
-		"  );",
-		"};",
-	],
-	"index.ts": [
-		'<span class="syn-keyword">import</span> { <span class="syn-function">createRoot</span> } <span class="syn-keyword">from</span> <span class="syn-string">\'react-dom/client\'</span>;',
-		'<span class="syn-keyword">import</span> { App } <span class="syn-keyword">from</span> <span class="syn-string">\'./components/App\'</span>;',
-		"",
-		'<span class="syn-keyword">const</span> root = <span class="syn-function">createRoot</span>(document.<span class="syn-function">getElementById</span>(<span class="syn-string">\'root\'</span>)!);',
-		'root.<span class="syn-function">render</span>(&lt;<span class="syn-tag">App</span> <span class="syn-attr">theme</span>=<span class="syn-string">"dark"</span> /&gt;);',
-	],
-	"package.json": [
-		"{",
-		'  <span class="syn-attr">"name"</span>: <span class="syn-string">"deltos"</span>,',
-		'  <span class="syn-attr">"version"</span>: <span class="syn-string">"0.1.0"</span>,',
-		'  <span class="syn-attr">"private"</span>: <span class="syn-keyword">true</span>,',
-		'  <span class="syn-attr">"scripts"</span>: {',
-		'    <span class="syn-attr">"start"</span>: <span class="syn-string">"electron ."</span>,',
-		'    <span class="syn-attr">"build"</span>: <span class="syn-string">"tsc && electron-builder"</span>',
-		"  },",
-		'  <span class="syn-attr">"dependencies"</span>: {',
-		'    <span class="syn-attr">"electron"</span>: <span class="syn-string">"^40.6.1"</span>,',
-		'    <span class="syn-attr">"react"</span>: <span class="syn-string">"^19.0.0"</span>',
-		"  }",
-		"}",
-	],
-	"README.md": [
-		'<span class="syn-comment"># Deltos</span>',
-		"",
-		"An Electron-based editor application.",
-		"",
-		'<span class="syn-comment">## Getting Started</span>',
-		"",
-		"```bash",
-		"bun install",
-		"bun start",
-		"```",
-	],
-};
+const fileTreeEl = document.getElementById("fileTree") as HTMLElement;
 
 const langColors: Record<string, string> = {
 	tsx: "#519aba",
 	ts: "#519aba",
 	js: "#cbcb41",
+	jsx: "#cbcb41",
 	json: "#cbcb41",
 	md: "#519aba",
 	html: "#e37933",
 	css: "#563d7c",
+	svg: "#a074c4",
 };
 
-// ── Render file tree ──
-const fileTreeEl = document.getElementById("fileTree") as HTMLElement;
+async function loadDirectory(dirPath: string): Promise<TreeNode[]> {
+	const entries = await electronAPI.readDirectory(dirPath);
+	return entries.map((entry) => ({
+		name: entry.name,
+		fullPath: joinPath(dirPath, entry.name),
+		type: entry.type,
+		loaded: false,
+		children: entry.type === "directory" ? [] : undefined,
+	}));
+}
 
-function renderTree(
-	items: TreeNode[],
+function renderTreeNodes(
+	nodes: TreeNode[],
 	container: HTMLElement,
-	depth = 0,
+	depth: number,
 ): void {
-	for (const item of items) {
+	for (const node of nodes) {
 		const el = document.createElement("div");
 
-		if (item.type === "folder") {
+		if (node.type === "directory") {
 			el.className = "tree-item folder";
 			el.style.paddingLeft = `${12 + depth * 16}px`;
-			el.innerHTML = `<span class="tree-icon">\u25B8</span><span class="tree-label">${item.name}</span>`;
-
+			el.innerHTML = `<span class="tree-icon">\u25B8</span><span class="tree-label">${node.name}</span>`;
 			container.appendChild(el);
 
 			const children = document.createElement("div");
 			children.className = "tree-children";
 			container.appendChild(children);
 
-			if (item.children && item.children.length > 0) {
-				renderTree(item.children, children, depth + 1);
-			}
-
-			el.addEventListener("click", (e) => {
+			el.addEventListener("click", async (e) => {
 				e.stopPropagation();
 				const isOpen = children.classList.contains("open");
+
+				if (!isOpen && !node.loaded) {
+					node.children = await loadDirectory(node.fullPath);
+					node.loaded = true;
+					children.innerHTML = "";
+					renderTreeNodes(node.children, children, depth + 1);
+				}
+
 				children.classList.toggle("open");
 				const icon = el.querySelector(".tree-icon");
 				if (icon) icon.textContent = isOpen ? "\u25B8" : "\u25BE";
 			});
-
-			// Auto-open src folder
-			if (item.name === "src") {
-				children.classList.add("open");
-				const icon = el.querySelector(".tree-icon");
-				if (icon) icon.textContent = "\u25BE";
-			}
 		} else {
 			el.className = "tree-item file";
 			el.style.paddingLeft = `${12 + depth * 16}px`;
-			const colorClass = item.lang ? `file-${item.lang}` : "";
-			el.innerHTML = `<span class="tree-icon ${colorClass}">\u25CF</span><span class="tree-label">${item.name}</span>`;
-			el.dataset.filename = item.name;
+			const ext = node.name.split(".").pop() ?? "";
+			const colorClass = langColors[ext] ? `file-${ext}` : "";
+			el.innerHTML = `<span class="tree-icon ${colorClass}">\u25CF</span><span class="tree-label">${node.name}</span>`;
+			el.dataset.fullpath = node.fullPath;
 
 			el.addEventListener("click", (e) => {
 				e.stopPropagation();
-				openFile(item.name);
+				openFile(node.fullPath, node.name);
 			});
 
 			container.appendChild(el);
@@ -237,20 +159,107 @@ function renderTree(
 	}
 }
 
-renderTree(fileTreeData, fileTreeEl);
-perfMark("file-tree-rendered");
+async function initFileTree(): Promise<void> {
+	const nodes = await loadDirectory(rootDirectory);
+	fileTreeEl.innerHTML = "";
+	renderTreeNodes(nodes, fileTreeEl, 0);
+	perfMark("file-tree-rendered");
+}
 
-// Auto-open src/components
-for (const tc of fileTreeEl.querySelectorAll(".tree-children")) {
-	const folder = tc.previousElementSibling;
-	const label = folder?.querySelector(".tree-label");
-	if (label?.textContent === "components") {
-		tc.classList.add("open");
-		const icon = folder?.querySelector(".tree-icon");
-		if (icon) icon.textContent = "\u25BE";
-		break;
+initFileTree();
+
+// ── CodeMirror Language Detection ──
+
+function languageExtension(filename: string) {
+	const ext = filename.split(".").pop()?.toLowerCase() ?? "";
+	switch (ext) {
+		case "ts":
+		case "tsx":
+			return javascript({ jsx: true, typescript: true });
+		case "js":
+		case "jsx":
+			return javascript({ jsx: true });
+		case "html":
+		case "htm":
+			return html();
+		case "css":
+			return css();
+		case "json":
+			return json();
+		case "md":
+		case "markdown":
+			return markdown();
+		default:
+			return [];
 	}
 }
+
+// ── Dark Theme (inline to avoid Bun bundling issue with @codemirror/theme-one-dark) ──
+const darkTheme = EditorView.theme(
+	{
+		"&": { color: "#abb2bf", backgroundColor: "#1e1e1e" },
+		".cm-content": { caretColor: "#528bff" },
+		".cm-cursor, .cm-dropCursor": { borderLeftColor: "#528bff" },
+		"&.cm-focused > .cm-scroller > .cm-selectionLayer .cm-selectionBackground, .cm-selectionBackground, .cm-content ::selection":
+			{ backgroundColor: "#264f78" },
+		".cm-panels": { backgroundColor: "#252526", color: "#abb2bf" },
+		".cm-panels.cm-panels-top": { borderBottom: "1px solid #3e3e42" },
+		".cm-panels.cm-panels-bottom": { borderTop: "1px solid #3e3e42" },
+		".cm-searchMatch": { backgroundColor: "#72a1ff59", outline: "1px solid #457dff" },
+		".cm-searchMatch.cm-searchMatch-selected": { backgroundColor: "#6199ff2f" },
+		".cm-activeLine": { backgroundColor: "#2c313c50" },
+		".cm-selectionMatch": { backgroundColor: "#aafe661a" },
+		"&.cm-focused .cm-matchingBracket, &.cm-focused .cm-nonmatchingBracket": {
+			backgroundColor: "#bad0f847",
+		},
+		".cm-gutters": {
+			backgroundColor: "#1e1e1e",
+			color: "#858585",
+			border: "none",
+			borderRight: "1px solid #3e3e42",
+		},
+		".cm-activeLineGutter": { backgroundColor: "#2c313c50" },
+		".cm-foldPlaceholder": {
+			backgroundColor: "transparent",
+			border: "none",
+			color: "#ddd",
+		},
+		".cm-tooltip": { border: "none", backgroundColor: "#252526" },
+		".cm-tooltip .cm-tooltip-arrow:before": { borderTopColor: "transparent", borderBottomColor: "transparent" },
+		".cm-tooltip .cm-tooltip-arrow:after": { borderTopColor: "#252526", borderBottomColor: "#252526" },
+		".cm-tooltip-autocomplete": { "& > ul > li[aria-selected]": { backgroundColor: "#094771", color: "#fff" } },
+	},
+	{ dark: true },
+);
+
+let _darkHighlight: ReturnType<typeof syntaxHighlighting> | null = null;
+function getDarkHighlight() {
+	if (!_darkHighlight) {
+		_darkHighlight = syntaxHighlighting(
+			HighlightStyle.define([
+				{ tag: tags.keyword, color: "#c678dd" },
+				{ tag: [tags.name, tags.deleted, tags.character, tags.propertyName, tags.macroName], color: "#e06c75" },
+				{ tag: [tags.processingInstruction, tags.string, tags.inserted], color: "#98c379" },
+				{ tag: [tags.variableName, tags.labelName], color: "#61afef" },
+				{ tag: [tags.color, tags.separator], color: "#d19a66" },
+				{ tag: [tags.typeName, tags.className, tags.number, tags.changed, tags.annotation, tags.modifier, tags.self, tags.namespace], color: "#e5c07b" },
+				{ tag: [tags.operator, tags.operatorKeyword, tags.url, tags.escape, tags.regexp, tags.link], color: "#56b6c2" },
+				{ tag: [tags.meta, tags.comment], color: "#7d8799" },
+				{ tag: tags.strong, fontWeight: "bold" },
+				{ tag: tags.emphasis, fontStyle: "italic" },
+				{ tag: tags.strikethrough, textDecoration: "line-through" },
+				{ tag: tags.heading, fontWeight: "bold", color: "#e06c75" },
+				{ tag: [tags.atom, tags.bool], color: "#d19a66" },
+				{ tag: tags.invalid, color: "#ffffff" },
+			]),
+		);
+	}
+	return _darkHighlight;
+}
+
+// ── Editor State ──
+const editorViews = new Map<string, EditorView>();
+const modifiedFiles = new Set<string>();
 
 // ── Tab & Editor Logic ──
 const tabBar = document.getElementById("tabBar") as HTMLElement;
@@ -259,37 +268,39 @@ const breadcrumb = document.getElementById("breadcrumb") as HTMLElement;
 let openTabs: string[] = [];
 let activeTab = "welcome";
 
-function openFile(filename: string): void {
+async function openFile(fullPath: string, displayName?: string): Promise<void> {
+	const name = displayName || baseName(fullPath);
+
 	for (const el of document.querySelectorAll(".tree-item")) {
 		el.classList.remove("selected");
 	}
 	const treeItem = document.querySelector(
-		`.tree-item[data-filename="${filename}"]`,
+		`.tree-item[data-fullpath="${CSS.escape(fullPath)}"]`,
 	);
 	if (treeItem) treeItem.classList.add("selected");
 
-	if (!openTabs.includes(filename)) {
-		openTabs.push(filename);
-		createTab(filename);
-		createEditorPane(filename);
+	if (!openTabs.includes(fullPath)) {
+		openTabs.push(fullPath);
+		createTab(fullPath, name);
+		await createEditorPane(fullPath);
 	}
-	activateTab(filename);
+	activateTab(fullPath);
 }
 
-function createTab(filename: string): void {
+function createTab(fullPath: string, displayName: string): void {
 	const tab = document.createElement("div");
 	tab.className = "tab";
-	tab.dataset.file = filename;
+	tab.dataset.file = fullPath;
 
-	const ext = filename.split(".").pop() ?? "";
+	const ext = displayName.split(".").pop() ?? "";
 	const iconColor = langColors[ext] || "#cccccc";
 
-	tab.innerHTML = `<span class="tab-icon" style="color:${iconColor}">\u25CF</span><span>${filename}</span><span class="tab-close">\u00D7</span>`;
+	tab.innerHTML = `<span class="tab-icon" style="color:${iconColor}">\u25CF</span><span>${displayName}</span><span class="tab-close">\u00D7</span>`;
 
 	tab.addEventListener("click", (e) => {
 		const target = e.target as HTMLElement;
 		if (!target.classList.contains("tab-close")) {
-			activateTab(filename);
+			activateTab(fullPath);
 		}
 	});
 
@@ -297,77 +308,160 @@ function createTab(filename: string): void {
 	if (closeBtn) {
 		closeBtn.addEventListener("click", (e) => {
 			e.stopPropagation();
-			closeTab(filename);
+			closeTab(fullPath);
 		});
 	}
 
 	tabBar.appendChild(tab);
 }
 
-function createEditorPane(filename: string): void {
+async function createEditorPane(fullPath: string): Promise<void> {
 	const pane = document.createElement("div");
 	pane.className = "editor-pane";
-	pane.dataset.file = filename;
+	pane.dataset.file = fullPath;
 
-	const lines = fileContents[filename] || [
-		`<span class="syn-comment">// ${filename}</span>`,
-		"",
-		'<span class="syn-comment">// File contents would appear here</span>',
-	];
+	const result = await electronAPI.readFile(fullPath);
 
-	const lineNums = lines.map((_, i) => i + 1).join("\n");
-	const code = lines.join("\n");
-	const minimapLines = lines
-		.map(
-			() =>
-				"\u2588\u2588 \u2588\u2588\u2588 \u2588\u2588 \u2588\u2588\u2588\u2588 \u2588\u2588",
-		)
-		.join("\n");
-
-	pane.innerHTML =
-		`<div class="line-numbers">${lineNums}</div>` +
-		`<div class="code-area">${code}</div>` +
-		`<div class="minimap">${minimapLines}</div>`;
+	if (result.isBinary || result.content === null) {
+		pane.innerHTML = '<div class="binary-notice">Binary file not displayed</div>';
+		editorContent.appendChild(pane);
+		return;
+	}
 
 	editorContent.appendChild(pane);
+
+	const extensions = [
+		basicSetup,
+		darkTheme,
+		getDarkHighlight(),
+		languageExtension(baseName(fullPath)),
+		EditorView.theme({
+			"&": { fontSize: "13px" },
+			".cm-content": { fontFamily: "'Consolas', 'Courier New', monospace" },
+			".cm-gutters": { fontFamily: "'Consolas', 'Courier New', monospace" },
+		}),
+		keymap.of([
+			{
+				key: "Mod-s",
+				run: () => {
+					saveFile(fullPath);
+					return true;
+				},
+			},
+		]),
+		EditorView.updateListener.of((update) => {
+			if (update.docChanged) {
+				modifiedFiles.add(fullPath);
+				const tab = document.querySelector(
+					`.tab[data-file="${CSS.escape(fullPath)}"]`,
+				);
+				if (tab) tab.classList.add("modified");
+			}
+		}),
+	];
+
+	const state = EditorState.create({
+		doc: result.content,
+		extensions,
+	});
+
+	const view = new EditorView({
+		state,
+		parent: pane,
+	});
+
+	editorViews.set(fullPath, view);
 }
 
-function activateTab(filename: string): void {
-	activeTab = filename;
+function activateTab(fullPath: string): void {
+	activeTab = fullPath;
 
 	for (const t of document.querySelectorAll(".tab")) {
 		t.classList.remove("active");
 	}
-	const tab = document.querySelector(`.tab[data-file="${filename}"]`);
+	const tab = document.querySelector(
+		`.tab[data-file="${CSS.escape(fullPath)}"]`,
+	);
 	if (tab) tab.classList.add("active");
 
 	for (const p of document.querySelectorAll(".editor-pane")) {
 		p.classList.remove("active");
 	}
-	const pane = document.querySelector(`.editor-pane[data-file="${filename}"]`);
+	const pane = document.querySelector(
+		`.editor-pane[data-file="${CSS.escape(fullPath)}"]`,
+	);
 	if (pane) pane.classList.add("active");
 
-	if (filename !== "welcome") {
-		breadcrumb.innerHTML = `<span>src</span><span class="sep">\u203A</span><span>components</span><span class="sep">\u203A</span><span>${filename}</span>`;
+	if (fullPath !== "welcome") {
+		// Build breadcrumb from path relative to root
+		let relativePath = fullPath;
+		if (rootDirectory !== "." && fullPath.startsWith(rootDirectory)) {
+			relativePath = fullPath.slice(rootDirectory.length).replace(/^[\\/]/, "");
+		}
+		const parts = relativePath.split(/[\\/]/);
+		breadcrumb.innerHTML = parts
+			.map((part, i) => {
+				const sep = i > 0 ? '<span class="sep">\u203A</span>' : "";
+				return `${sep}<span>${part}</span>`;
+			})
+			.join("");
 		breadcrumb.classList.add("visible");
 	} else {
 		breadcrumb.classList.remove("visible");
 	}
+
+	// Trigger CodeMirror relayout
+	const view = editorViews.get(fullPath);
+	if (view) {
+		requestAnimationFrame(() => view.requestMeasure());
+	}
 }
 
-function closeTab(filename: string): void {
-	openTabs = openTabs.filter((f) => f !== filename);
+function closeTab(fullPath: string): void {
+	openTabs = openTabs.filter((f) => f !== fullPath);
 
-	const tab = document.querySelector(`.tab[data-file="${filename}"]`);
+	const tab = document.querySelector(
+		`.tab[data-file="${CSS.escape(fullPath)}"]`,
+	);
 	if (tab) tab.remove();
 
-	const pane = document.querySelector(`.editor-pane[data-file="${filename}"]`);
+	const pane = document.querySelector(
+		`.editor-pane[data-file="${CSS.escape(fullPath)}"]`,
+	);
 	if (pane) pane.remove();
 
-	if (activeTab === filename) {
+	// Clean up CodeMirror
+	const view = editorViews.get(fullPath);
+	if (view) {
+		view.destroy();
+		editorViews.delete(fullPath);
+	}
+	modifiedFiles.delete(fullPath);
+
+	if (activeTab === fullPath) {
 		const next =
 			openTabs.length > 0 ? openTabs[openTabs.length - 1] : "welcome";
 		activateTab(next);
+	}
+}
+
+// ── Save ──
+
+async function saveFile(fullPath: string): Promise<void> {
+	const view = editorViews.get(fullPath);
+	if (!view) return;
+
+	const content = view.state.doc.toString();
+	const result = await electronAPI.writeFile(fullPath, content);
+
+	if (result.success) {
+		modifiedFiles.delete(fullPath);
+		const tab = document.querySelector(
+			`.tab[data-file="${CSS.escape(fullPath)}"]`,
+		);
+		if (tab) tab.classList.remove("modified");
+	} else {
+		console.error(`Failed to save ${fullPath}: ${result.error}`);
 	}
 }
 
@@ -423,6 +517,8 @@ const splitGroups = new Map<number, SplitGroup>();
 let activeSplitGroupId: number | null = null;
 let nextSplitGroupId = 1;
 let shellsLoaded = false;
+let mouseFollowFocus =
+	localStorage.getItem("deltos:mouseFollowFocus") !== "false";
 
 async function loadShells(): Promise<void> {
 	if (shellsLoaded) return;
@@ -570,6 +666,12 @@ async function createTerminalInstance(targetGroupId?: number): Promise<void> {
 	group.containerEl.appendChild(containerEl);
 
 	xterm.open(containerEl);
+
+	containerEl.addEventListener("mouseenter", () => {
+		if (mouseFollowFocus) {
+			xterm.focus();
+		}
+	});
 
 	// Create sidebar list item
 	const sidebarItemEl = document.createElement("div");
@@ -796,6 +898,11 @@ document.addEventListener("keydown", (e) => {
 			openTerminalPanel();
 		}
 	}
+	// Global Ctrl+S save
+	if (e.ctrlKey && e.key === "s" && activeTab !== "welcome") {
+		e.preventDefault();
+		saveFile(activeTab);
+	}
 });
 
 // ── Panel Resize ──
@@ -956,26 +1063,43 @@ document.getElementById("menuNewTerminal")?.addEventListener("click", () => {
 	createTerminalInstance();
 });
 
-// ── Open App.tsx by default ──
-openFile("App.tsx");
+const focusFollowsCheck = document.getElementById(
+	"focusFollowsCheck",
+) as HTMLElement;
+if (!mouseFollowFocus) focusFollowsCheck.style.visibility = "hidden";
+
+document
+	.getElementById("menuFocusFollowsMouse")
+	?.addEventListener("click", () => {
+		closeAllMenus();
+		mouseFollowFocus = !mouseFollowFocus;
+		localStorage.setItem("deltos:mouseFollowFocus", String(mouseFollowFocus));
+		focusFollowsCheck.style.visibility = mouseFollowFocus
+			? "visible"
+			: "hidden";
+	});
+
+// ── Open CLI file if specified ──
+if (electronAPI.cliFile) {
+	openFile(electronAPI.cliFile);
+}
+
+// Apply CLI args to titlebar (synchronous — embedded via env vars in preload)
+const titleEl = document.querySelector(".titlebar-title");
+if (titleEl) {
+	if (electronAPI.cliFile) {
+		titleEl.textContent = electronAPI.cliFile;
+	} else if (electronAPI.cliDirectory) {
+		const dirName =
+			electronAPI.cliDirectory.split(/[\\/]/).pop() || electronAPI.cliDirectory;
+		titleEl.textContent = dirName;
+	}
+}
 
 // Defer terminal panel open to allow first paint of the editor
 requestAnimationFrame(() => {
 	perfMark("first-paint");
 	requestAnimationFrame(() => {
 		openTerminalPanel();
-
-		// Apply CLI args to titlebar
-		electronAPI.getCliArgs().then(({ directory, file }) => {
-			const titleEl = document.querySelector(".titlebar-title");
-			if (titleEl) {
-				if (file) {
-					titleEl.textContent = file;
-				} else if (directory) {
-					const dirName = directory.split(/[\\/]/).pop() || directory;
-					titleEl.textContent = dirName;
-				}
-			}
-		});
 	});
 });

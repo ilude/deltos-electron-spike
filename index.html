@@ -2,7 +2,7 @@
 <html lang="en">
 <head>
   <meta charset="UTF-8">
-  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'">
+  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' 'unsafe-eval'; style-src 'self' 'unsafe-inline'">
   <link rel="stylesheet" href="dist/xterm.css">
   <title>Deltos</title>
   <style>
@@ -367,43 +367,30 @@
       display: none;
       height: 100%;
     }
-    .editor-pane.active { display: flex; }
+    .editor-pane.active { display: flex; flex-direction: column; }
 
-    .line-numbers {
-      padding: 4px 0;
-      text-align: right;
-      color: var(--text-dim);
-      font-family: var(--font-mono);
-      font-size: 13px;
-      line-height: 20px;
-      min-width: 40px;
-      padding-right: 12px;
-      padding-left: 12px;
-      user-select: none;
-      flex-shrink: 0;
-      white-space: pre;
-    }
-    .code-area {
+    /* CodeMirror editor integration */
+    .editor-pane .cm-editor {
       flex: 1;
-      padding: 4px 12px 4px 0;
-      font-family: var(--font-mono);
-      font-size: 13px;
-      line-height: 20px;
-      overflow-x: auto;
-      white-space: pre;
-      color: var(--text);
+      min-height: 0;
+      overflow: hidden;
     }
+    .editor-pane .cm-scroller {
+      overflow: auto !important;
+    }
+    .cm-scroller::-webkit-scrollbar { width: 10px; height: 10px; }
+    .cm-scroller::-webkit-scrollbar-track { background: transparent; }
+    .cm-scroller::-webkit-scrollbar-thumb { background: var(--scrollbar); }
+    .cm-scroller::-webkit-scrollbar-thumb:hover { background: var(--scrollbar-hover); }
 
-    /* Syntax colors */
-    .syn-keyword { color: #569cd6; }
-    .syn-string { color: #ce9178; }
-    .syn-comment { color: #6a9955; }
-    .syn-function { color: #dcdcaa; }
-    .syn-type { color: #4ec9b0; }
-    .syn-number { color: #b5cea8; }
-    .syn-tag { color: #569cd6; }
-    .syn-attr { color: #9cdcfe; }
-    .syn-punct { color: #808080; }
+    .editor-pane .binary-notice {
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      flex: 1;
+      color: var(--text-dim);
+      font-size: 14px;
+    }
 
     /* Welcome tab */
     .welcome {
@@ -664,20 +651,6 @@
     .breadcrumb span:hover { color: var(--text); }
     .breadcrumb .sep { color: var(--text-dim); font-size: 10px; }
 
-    /* ── Minimap placeholder ── */
-    .minimap {
-      width: 60px;
-      flex-shrink: 0;
-      background: var(--bg-editor);
-      opacity: 0.4;
-      overflow: hidden;
-      padding: 8px 4px;
-      font-size: 2px;
-      line-height: 3px;
-      color: var(--text-dim);
-      font-family: var(--font-mono);
-      user-select: none;
-    }
   </style>
 </head>
 <body>
@@ -715,6 +688,10 @@
         <div class="titlebar-menu-item" data-menu="terminal">Terminal
           <div class="menu-dropdown">
             <div class="menu-dropdown-item" id="menuNewTerminal">New Terminal<span class="menu-dropdown-shortcut">Ctrl+Shift+`</span></div>
+            <div class="menu-dropdown-sep"></div>
+            <div class="menu-dropdown-item" id="menuFocusFollowsMouse">
+              <span id="focusFollowsCheck" style="display:inline-block;width:1em;text-align:center;">&#10003;</span> Focus Follows Mouse
+            </div>
           </div>
         </div>
         <div class="titlebar-menu-item" data-menu="help">Help
