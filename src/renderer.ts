@@ -958,9 +958,10 @@ document.getElementById("menuNewTerminal")?.addEventListener("click", () => {
 // ── Open App.tsx by default ──
 openFile("App.tsx");
 
+// Defer terminal panel open to allow first paint of the editor
 requestAnimationFrame(() => {
 	perfMark("first-paint");
+	requestAnimationFrame(() => {
+		openTerminalPanel();
+	});
 });
-
-// ── Auto-open terminal panel ──
-openTerminalPanel();
