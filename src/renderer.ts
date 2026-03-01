@@ -662,5 +662,63 @@ if (platform === "darwin") {
 	if (menu) menu.style.paddingLeft = "70px";
 }
 
+// ── Titlebar Dropdown Menus ──
+let openMenu: HTMLElement | null = null;
+
+function closeAllMenus(): void {
+	if (openMenu) {
+		openMenu.classList.remove("open");
+		const dropdown = openMenu.querySelector(".menu-dropdown");
+		if (dropdown) dropdown.classList.remove("open");
+		openMenu = null;
+	}
+}
+
+for (const menuItem of document.querySelectorAll(
+	".titlebar-menu-item[data-menu]",
+)) {
+	menuItem.addEventListener("click", (e) => {
+		e.stopPropagation();
+		const item = menuItem as HTMLElement;
+		const dropdown = item.querySelector(".menu-dropdown") as HTMLElement;
+		if (!dropdown) return;
+
+		if (openMenu === item) {
+			closeAllMenus();
+		} else {
+			closeAllMenus();
+			item.classList.add("open");
+			dropdown.classList.add("open");
+			openMenu = item;
+		}
+	});
+
+	menuItem.addEventListener("mouseenter", () => {
+		if (openMenu && openMenu !== menuItem) {
+			closeAllMenus();
+			const item = menuItem as HTMLElement;
+			const dropdown = item.querySelector(".menu-dropdown") as HTMLElement;
+			if (dropdown) {
+				item.classList.add("open");
+				dropdown.classList.add("open");
+				openMenu = item;
+			}
+		}
+	});
+}
+
+// Close menus when clicking outside
+document.addEventListener("click", () => {
+	closeAllMenus();
+});
+
+// Close menus on Escape
+document.addEventListener("keydown", (e) => {
+	if (e.key === "Escape") closeAllMenus();
+});
+
 // ── Open App.tsx by default ──
 openFile("App.tsx");
+
+// ── Auto-open terminal panel ──
+openTerminalPanel();

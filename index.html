@@ -81,10 +81,50 @@
       cursor: pointer;
       color: var(--text);
       font-size: 13px;
+      position: relative;
     }
-    .titlebar-menu-item:hover {
+    .titlebar-menu-item:hover,
+    .titlebar-menu-item.open {
       background: rgba(255,255,255,0.08);
     }
+
+    /* ── Dropdown Menus ── */
+    .menu-dropdown {
+      display: none;
+      position: absolute;
+      top: 30px;
+      left: 0;
+      min-width: 200px;
+      background: #2d2d2d;
+      border: 1px solid var(--border);
+      box-shadow: 0 4px 12px rgba(0,0,0,0.4);
+      z-index: 1000;
+      padding: 4px 0;
+    }
+    .menu-dropdown.open { display: block; }
+    .menu-dropdown-item {
+      padding: 4px 24px;
+      font-size: 13px;
+      color: var(--text);
+      cursor: pointer;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      white-space: nowrap;
+    }
+    .menu-dropdown-item:hover { background: var(--accent); color: #fff; }
+    .menu-dropdown-item.disabled { color: var(--text-dim); pointer-events: none; }
+    .menu-dropdown-sep {
+      height: 1px;
+      background: var(--border);
+      margin: 4px 0;
+    }
+    .menu-dropdown-shortcut {
+      color: var(--text-dim);
+      font-size: 12px;
+      margin-left: 32px;
+    }
+    .menu-dropdown-item:hover .menu-dropdown-shortcut { color: rgba(255,255,255,0.7); }
     .titlebar-title {
       flex: 1;
       text-align: center;
@@ -584,15 +624,85 @@
   <div class="app">
     <!-- Title Bar -->
     <div class="titlebar">
-      <div class="titlebar-menu">
-        <div class="titlebar-menu-item">File</div>
-        <div class="titlebar-menu-item">Edit</div>
-        <div class="titlebar-menu-item">Selection</div>
-        <div class="titlebar-menu-item">View</div>
-        <div class="titlebar-menu-item">Go</div>
-        <div class="titlebar-menu-item">Run</div>
-        <div class="titlebar-menu-item">Terminal</div>
-        <div class="titlebar-menu-item">Help</div>
+      <div class="titlebar-menu" id="titlebarMenu">
+        <div class="titlebar-menu-item" data-menu="file">File
+          <div class="menu-dropdown">
+            <div class="menu-dropdown-item">New File<span class="menu-dropdown-shortcut">Ctrl+N</span></div>
+            <div class="menu-dropdown-item">New Window<span class="menu-dropdown-shortcut">Ctrl+Shift+N</span></div>
+            <div class="menu-dropdown-sep"></div>
+            <div class="menu-dropdown-item">Open File...<span class="menu-dropdown-shortcut">Ctrl+O</span></div>
+            <div class="menu-dropdown-item">Open Folder...<span class="menu-dropdown-shortcut">Ctrl+K Ctrl+O</span></div>
+            <div class="menu-dropdown-sep"></div>
+            <div class="menu-dropdown-item">Save<span class="menu-dropdown-shortcut">Ctrl+S</span></div>
+            <div class="menu-dropdown-item">Save As...<span class="menu-dropdown-shortcut">Ctrl+Shift+S</span></div>
+            <div class="menu-dropdown-sep"></div>
+            <div class="menu-dropdown-item">Exit<span class="menu-dropdown-shortcut">Alt+F4</span></div>
+          </div>
+        </div>
+        <div class="titlebar-menu-item" data-menu="edit">Edit
+          <div class="menu-dropdown">
+            <div class="menu-dropdown-item">Undo<span class="menu-dropdown-shortcut">Ctrl+Z</span></div>
+            <div class="menu-dropdown-item">Redo<span class="menu-dropdown-shortcut">Ctrl+Y</span></div>
+            <div class="menu-dropdown-sep"></div>
+            <div class="menu-dropdown-item">Cut<span class="menu-dropdown-shortcut">Ctrl+X</span></div>
+            <div class="menu-dropdown-item">Copy<span class="menu-dropdown-shortcut">Ctrl+C</span></div>
+            <div class="menu-dropdown-item">Paste<span class="menu-dropdown-shortcut">Ctrl+V</span></div>
+            <div class="menu-dropdown-sep"></div>
+            <div class="menu-dropdown-item">Find<span class="menu-dropdown-shortcut">Ctrl+F</span></div>
+            <div class="menu-dropdown-item">Replace<span class="menu-dropdown-shortcut">Ctrl+H</span></div>
+          </div>
+        </div>
+        <div class="titlebar-menu-item" data-menu="selection">Selection
+          <div class="menu-dropdown">
+            <div class="menu-dropdown-item">Select All<span class="menu-dropdown-shortcut">Ctrl+A</span></div>
+            <div class="menu-dropdown-item">Expand Selection<span class="menu-dropdown-shortcut">Shift+Alt+→</span></div>
+            <div class="menu-dropdown-item">Shrink Selection<span class="menu-dropdown-shortcut">Shift+Alt+←</span></div>
+          </div>
+        </div>
+        <div class="titlebar-menu-item" data-menu="view">View
+          <div class="menu-dropdown">
+            <div class="menu-dropdown-item">Command Palette...<span class="menu-dropdown-shortcut">Ctrl+Shift+P</span></div>
+            <div class="menu-dropdown-sep"></div>
+            <div class="menu-dropdown-item">Explorer<span class="menu-dropdown-shortcut">Ctrl+Shift+E</span></div>
+            <div class="menu-dropdown-item">Search<span class="menu-dropdown-shortcut">Ctrl+Shift+F</span></div>
+            <div class="menu-dropdown-item">Source Control<span class="menu-dropdown-shortcut">Ctrl+Shift+G</span></div>
+            <div class="menu-dropdown-sep"></div>
+            <div class="menu-dropdown-item">Terminal<span class="menu-dropdown-shortcut">Ctrl+`</span></div>
+            <div class="menu-dropdown-item">Problems<span class="menu-dropdown-shortcut">Ctrl+Shift+M</span></div>
+          </div>
+        </div>
+        <div class="titlebar-menu-item" data-menu="go">Go
+          <div class="menu-dropdown">
+            <div class="menu-dropdown-item">Go to File...<span class="menu-dropdown-shortcut">Ctrl+P</span></div>
+            <div class="menu-dropdown-item">Go to Symbol...<span class="menu-dropdown-shortcut">Ctrl+Shift+O</span></div>
+            <div class="menu-dropdown-item">Go to Line...<span class="menu-dropdown-shortcut">Ctrl+G</span></div>
+          </div>
+        </div>
+        <div class="titlebar-menu-item" data-menu="run">Run
+          <div class="menu-dropdown">
+            <div class="menu-dropdown-item">Start Debugging<span class="menu-dropdown-shortcut">F5</span></div>
+            <div class="menu-dropdown-item">Run Without Debugging<span class="menu-dropdown-shortcut">Ctrl+F5</span></div>
+            <div class="menu-dropdown-sep"></div>
+            <div class="menu-dropdown-item">Add Configuration...</div>
+          </div>
+        </div>
+        <div class="titlebar-menu-item" data-menu="terminal">Terminal
+          <div class="menu-dropdown">
+            <div class="menu-dropdown-item">New Terminal<span class="menu-dropdown-shortcut">Ctrl+Shift+`</span></div>
+            <div class="menu-dropdown-item">Split Terminal</div>
+            <div class="menu-dropdown-sep"></div>
+            <div class="menu-dropdown-item">Run Task...</div>
+            <div class="menu-dropdown-item">Run Build Task...<span class="menu-dropdown-shortcut">Ctrl+Shift+B</span></div>
+          </div>
+        </div>
+        <div class="titlebar-menu-item" data-menu="help">Help
+          <div class="menu-dropdown">
+            <div class="menu-dropdown-item">Welcome</div>
+            <div class="menu-dropdown-item">Documentation</div>
+            <div class="menu-dropdown-sep"></div>
+            <div class="menu-dropdown-item">About</div>
+          </div>
+        </div>
       </div>
       <div class="titlebar-title">Deltos</div>
       <div class="titlebar-controls">
