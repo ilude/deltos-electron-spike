@@ -5,6 +5,7 @@ contextBridge.exposeInMainWorld("electronAPI", {
 	maximize: () => ipcRenderer.send("window-maximize"),
 	close: () => ipcRenderer.send("window-close"),
 	platform: process.platform,
+	appStartTime: Number(process.env.DELTOS_APP_START),
 
 	// Terminal API
 	listShells: () => ipcRenderer.invoke("terminal:list-shells"),

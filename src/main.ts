@@ -1,3 +1,5 @@
+const APP_START = Date.now();
+
 import fs from "node:fs";
 import path from "node:path";
 
@@ -148,7 +150,13 @@ ipcMain.on("terminal:kill", (_e, id: number) => {
 });
 
 app.whenReady().then(() => {
+	process.env.DELTOS_APP_START = String(APP_START);
+	const mainReady = Date.now() - APP_START;
 	createWindow();
+	const windowCreated = Date.now() - APP_START;
+	console.log(
+		`[Deltos Main] main-ready: ${mainReady}ms, window-created: ${windowCreated}ms`,
+	);
 
 	app.on("activate", () => {
 		if (BrowserWindow.getAllWindows().length === 0) {

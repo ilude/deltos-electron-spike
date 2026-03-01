@@ -11,6 +11,7 @@ declare const electronAPI: {
 	maximize: () => void;
 	close: () => void;
 	platform: string;
+	appStartTime: number;
 	listShells: () => Promise<ShellInfo[]>;
 	spawnTerminal: (shellPath: string) => Promise<number>;
 	writeTerminal: (id: number, data: string) => void;
@@ -19,6 +20,21 @@ declare const electronAPI: {
 	onTerminalData: (callback: (id: number, data: string) => void) => () => void;
 	onTerminalExit: (callback: (id: number) => void) => () => void;
 };
+
+// ── Startup Timing ──
+const PERF: Record<string, number> = {};
+function perfMark(label: string): void {
+	PERF[label] = Date.now() - electronAPI.appStartTime;
+}
+
+function logStartupTimings(): void {
+	const entries = Object.entries(PERF)
+		.map(([label, ms]) => `${label}: ${ms}ms`)
+		.join(", ");
+	console.log(`[Deltos Startup] ${entries}`);
+}
+
+perfMark("renderer-start");
 
 interface TreeNode {
 	name: string;
@@ -221,6 +237,7 @@ function renderTree(
 }
 
 renderTree(fileTreeData, fileTreeEl);
+perfMark("file-tree-rendered");
 
 // Auto-open src/components
 for (const tc of fileTreeEl.querySelectorAll(".tree-children")) {
@@ -417,6 +434,7 @@ async function loadShells(): Promise<void> {
 		shellSelect.appendChild(opt);
 	}
 	shellsLoaded = true;
+	perfMark("shells-loaded");
 }
 
 function fitAllInGroup(groupId: number): void {
@@ -477,6 +495,7 @@ async function createTerminalInstance(targetGroupId?: number): Promise<void> {
 		shellSelect.options[shellSelect.selectedIndex]?.textContent || "Terminal";
 
 	const id = await electronAPI.spawnTerminal(shellPath);
+	perfMark("terminal-spawned");
 
 	const xterm = new Terminal({
 		theme: {
@@ -651,7 +670,13 @@ function killTerminalInstance(id: number): void {
 }
 
 // Listen for PTY output
+let terminalReadyFired = false;
 electronAPI.onTerminalData((id, data) => {
+	if (!terminalReadyFired) {
+		terminalReadyFired = true;
+		perfMark("terminal-ready");
+		logStartupTimings();
+	}
 	const inst = terminalInstances.get(id);
 	if (inst) {
 		inst.xterm.write(data);
@@ -728,6 +753,7 @@ splitTermBtn.addEventListener("click", () => {
 // ── Terminal Toggle ──
 
 async function openTerminalPanel(): Promise<void> {
+	perfMark("terminal-panel-open");
 	panelContainer.classList.add("open");
 	if (terminalInstances.size === 0) {
 		await createTerminalInstance();
@@ -931,6 +957,10 @@ document.getElementById("menuNewTerminal")?.addEventListener("click", () => {
 
 // ── Open App.tsx by default ──
 openFile("App.tsx");
+
+requestAnimationFrame(() => {
+	perfMark("first-paint");
+});
 
 // ── Auto-open terminal panel ──
 openTerminalPanel();
