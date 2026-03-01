@@ -387,7 +387,7 @@ const panelContainer = document.getElementById("panelContainer") as HTMLElement;
 const toggleTerminal = document.getElementById("toggleTerminal") as HTMLElement;
 const closePanelBtn = document.getElementById("closePanelBtn") as HTMLElement;
 const terminalContainer = document.getElementById("terminal") as HTMLElement;
-const terminalTabsEl = document.getElementById("terminalTabs") as HTMLElement;
+const terminalListEl = document.getElementById("terminalList") as HTMLElement;
 const shellSelect = document.getElementById("shellSelect") as HTMLSelectElement;
 const newTermBtn = document.getElementById("newTermBtn") as HTMLElement;
 
@@ -456,22 +456,22 @@ async function createTerminalInstance(): Promise<void> {
 	xterm.open(containerEl);
 	fitAddon.fit();
 
-	// Create terminal tab
+	// Create terminal list item
 	const tabEl = document.createElement("div");
-	tabEl.className = "terminal-tab";
+	tabEl.className = "terminal-list-item";
 	tabEl.dataset.termId = String(id);
-	tabEl.innerHTML = `<span class="terminal-tab-label">${shellName}</span><span class="terminal-tab-close">\u00D7</span>`;
+	tabEl.innerHTML = `<span class="terminal-list-item-icon">&#9638;</span><span class="terminal-list-item-label">${shellName}</span><span class="terminal-list-item-close">\u00D7</span>`;
 
 	tabEl.addEventListener("click", (e) => {
 		const target = e.target as HTMLElement;
-		if (target.classList.contains("terminal-tab-close")) {
+		if (target.classList.contains("terminal-list-item-close")) {
 			killTerminalInstance(id);
 		} else {
 			activateTerminal(id);
 		}
 	});
 
-	terminalTabsEl.appendChild(tabEl);
+	terminalListEl.appendChild(tabEl);
 
 	// Wire IPC
 	xterm.onData((data) => {
