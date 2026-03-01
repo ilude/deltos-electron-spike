@@ -239,7 +239,7 @@ app.whenReady().then(() => {
 	if (cachedShells && cachedShells.length > 0) {
 		const defaultShell = cachedShells[0];
 		const terminalCwd =
-			process.env.HOME || process.env.USERPROFILE || projectRoot;
+			cliDirectory || process.env.HOME || process.env.USERPROFILE || projectRoot;
 		const id = nextTerminalId++;
 		const prePty = pty.spawn(defaultShell.path, [], {
 			name: "xterm-256color",
