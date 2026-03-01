@@ -112,6 +112,9 @@ Theo argues that Cursor, Claude Code, and Codex all suffer from the same root ca
 4. **Patterns are the product** — every code path should be one you'd want the AI to copy
 5. **Recoverable state** — no single failure should destroy a session
 
+### MUST-Have Features
+- **Mouse follow focus** — hovering over a terminal pane focuses it automatically. Configurable via Terminal menu, on by default. Persisted in localStorage.
+
 ### Quality Gates
 - [ ] Biome passes with zero errors/warnings on every commit
 - [ ] No `setTimeout`/`requestAnimationFrame` hacks without a comment explaining why and a TODO to fix
