@@ -37,8 +37,7 @@ contextBridge.exposeInMainWorld("electronAPI", {
 	// Filesystem API
 	readDirectory: (dirPath: string) =>
 		ipcRenderer.invoke("fs:readDirectory", dirPath),
-	readFile: (filePath: string) =>
-		ipcRenderer.invoke("fs:readFile", filePath),
+	readFile: (filePath: string) => ipcRenderer.invoke("fs:readFile", filePath),
 	writeFile: (filePath: string, content: string) =>
 		ipcRenderer.invoke("fs:writeFile", filePath, content),
 });

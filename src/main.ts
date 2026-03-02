@@ -229,14 +229,21 @@ ipcMain.on("terminal:kill", (_e, id: number) => {
 
 // ── Filesystem IPC Handlers ──
 
-const ALLOWED_DOTFILES = new Set([".gitignore", ".env.example", ".editorconfig", ".prettierrc", ".eslintrc"]);
+const ALLOWED_DOTFILES = new Set([
+	".gitignore",
+	".env.example",
+	".editorconfig",
+	".prettierrc",
+	".eslintrc",
+]);
 
 ipcMain.handle("fs:readDirectory", async (_e, dirPath: string) => {
 	const entries = await fs.promises.readdir(dirPath, { withFileTypes: true });
 	const result: { name: string; type: "file" | "directory" }[] = [];
 
 	for (const entry of entries) {
-		if (entry.name.startsWith(".") && !ALLOWED_DOTFILES.has(entry.name)) continue;
+		if (entry.name.startsWith(".") && !ALLOWED_DOTFILES.has(entry.name))
+			continue;
 		result.push({
 			name: entry.name,
 			type: entry.isDirectory() ? "directory" : "file",
@@ -275,14 +282,20 @@ ipcMain.handle("fs:readFile", async (_e, filePath: string) => {
 	}
 });
 
-ipcMain.handle("fs:writeFile", async (_e, filePath: string, content: string) => {
-	try {
-		await fs.promises.writeFile(filePath, content, "utf-8");
-		return { success: true };
-	} catch (err: unknown) {
-		return { success: false, error: err instanceof Error ? err.message : String(err) };
-	}
-});
+ipcMain.handle(
+	"fs:writeFile",
+	async (_e, filePath: string, content: string) => {
+		try {
+			await fs.promises.writeFile(filePath, content, "utf-8");
+			return { success: true };
+		} catch (err: unknown) {
+			return {
+				success: false,
+				error: err instanceof Error ? err.message : String(err),
+			};
+		}
+	},
+);
 
 app.whenReady().then(() => {
 	process.env.DELTOS_APP_START = String(APP_START);

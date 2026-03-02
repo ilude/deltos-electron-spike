@@ -1,15 +1,15 @@
-import { FitAddon } from "@xterm/addon-fit";
-import { Terminal } from "@xterm/xterm";
-import { EditorState } from "@codemirror/state";
-import { EditorView, keymap } from "@codemirror/view";
-import { basicSetup } from "codemirror";
-import { HighlightStyle, syntaxHighlighting } from "@codemirror/language";
-import { tags } from "@lezer/highlight";
-import { javascript } from "@codemirror/lang-javascript";
-import { html } from "@codemirror/lang-html";
 import { css } from "@codemirror/lang-css";
+import { html } from "@codemirror/lang-html";
+import { javascript } from "@codemirror/lang-javascript";
 import { json } from "@codemirror/lang-json";
 import { markdown } from "@codemirror/lang-markdown";
+import { HighlightStyle, syntaxHighlighting } from "@codemirror/language";
+import { EditorState } from "@codemirror/state";
+import { EditorView, keymap } from "@codemirror/view";
+import { tags } from "@lezer/highlight";
+import { FitAddon } from "@xterm/addon-fit";
+import { Terminal } from "@xterm/xterm";
+import { basicSetup } from "codemirror";
 
 interface ShellInfo {
 	name: string;
@@ -37,8 +37,13 @@ declare const electronAPI: {
 	onTerminalData: (callback: (id: number, data: string) => void) => () => void;
 	onTerminalExit: (callback: (id: number) => void) => () => void;
 	readDirectory: (dirPath: string) => Promise<DirEntry[]>;
-	readFile: (filePath: string) => Promise<{ content: string | null; isBinary: boolean }>;
-	writeFile: (filePath: string, content: string) => Promise<{ success: boolean; error?: string }>;
+	readFile: (
+		filePath: string,
+	) => Promise<{ content: string | null; isBinary: boolean }>;
+	writeFile: (
+		filePath: string,
+		content: string,
+	) => Promise<{ success: boolean; error?: string }>;
 };
 
 // ── Startup Timing ──
@@ -205,7 +210,10 @@ const darkTheme = EditorView.theme(
 		".cm-panels": { backgroundColor: "#252526", color: "#abb2bf" },
 		".cm-panels.cm-panels-top": { borderBottom: "1px solid #3e3e42" },
 		".cm-panels.cm-panels-bottom": { borderTop: "1px solid #3e3e42" },
-		".cm-searchMatch": { backgroundColor: "#72a1ff59", outline: "1px solid #457dff" },
+		".cm-searchMatch": {
+			backgroundColor: "#72a1ff59",
+			outline: "1px solid #457dff",
+		},
 		".cm-searchMatch.cm-searchMatch-selected": { backgroundColor: "#6199ff2f" },
 		".cm-activeLine": { backgroundColor: "#2c313c50" },
 		".cm-selectionMatch": { backgroundColor: "#aafe661a" },
@@ -225,9 +233,20 @@ const darkTheme = EditorView.theme(
 			color: "#ddd",
 		},
 		".cm-tooltip": { border: "none", backgroundColor: "#252526" },
-		".cm-tooltip .cm-tooltip-arrow:before": { borderTopColor: "transparent", borderBottomColor: "transparent" },
-		".cm-tooltip .cm-tooltip-arrow:after": { borderTopColor: "#252526", borderBottomColor: "#252526" },
-		".cm-tooltip-autocomplete": { "& > ul > li[aria-selected]": { backgroundColor: "#094771", color: "#fff" } },
+		".cm-tooltip .cm-tooltip-arrow:before": {
+			borderTopColor: "transparent",
+			borderBottomColor: "transparent",
+		},
+		".cm-tooltip .cm-tooltip-arrow:after": {
+			borderTopColor: "#252526",
+			borderBottomColor: "#252526",
+		},
+		".cm-tooltip-autocomplete": {
+			"& > ul > li[aria-selected]": {
+				backgroundColor: "#094771",
+				color: "#fff",
+			},
+		},
 	},
 	{ dark: true },
 );
@@ -238,12 +257,46 @@ function getDarkHighlight() {
 		_darkHighlight = syntaxHighlighting(
 			HighlightStyle.define([
 				{ tag: tags.keyword, color: "#c678dd" },
-				{ tag: [tags.name, tags.deleted, tags.character, tags.propertyName, tags.macroName], color: "#e06c75" },
-				{ tag: [tags.processingInstruction, tags.string, tags.inserted], color: "#98c379" },
+				{
+					tag: [
+						tags.name,
+						tags.deleted,
+						tags.character,
+						tags.propertyName,
+						tags.macroName,
+					],
+					color: "#e06c75",
+				},
+				{
+					tag: [tags.processingInstruction, tags.string, tags.inserted],
+					color: "#98c379",
+				},
 				{ tag: [tags.variableName, tags.labelName], color: "#61afef" },
 				{ tag: [tags.color, tags.separator], color: "#d19a66" },
-				{ tag: [tags.typeName, tags.className, tags.number, tags.changed, tags.annotation, tags.modifier, tags.self, tags.namespace], color: "#e5c07b" },
-				{ tag: [tags.operator, tags.operatorKeyword, tags.url, tags.escape, tags.regexp, tags.link], color: "#56b6c2" },
+				{
+					tag: [
+						tags.typeName,
+						tags.className,
+						tags.number,
+						tags.changed,
+						tags.annotation,
+						tags.modifier,
+						tags.self,
+						tags.namespace,
+					],
+					color: "#e5c07b",
+				},
+				{
+					tag: [
+						tags.operator,
+						tags.operatorKeyword,
+						tags.url,
+						tags.escape,
+						tags.regexp,
+						tags.link,
+					],
+					color: "#56b6c2",
+				},
 				{ tag: [tags.meta, tags.comment], color: "#7d8799" },
 				{ tag: tags.strong, fontWeight: "bold" },
 				{ tag: tags.emphasis, fontStyle: "italic" },
@@ -323,7 +376,8 @@ async function createEditorPane(fullPath: string): Promise<void> {
 	const result = await electronAPI.readFile(fullPath);
 
 	if (result.isBinary || result.content === null) {
-		pane.innerHTML = '<div class="binary-notice">Binary file not displayed</div>';
+		pane.innerHTML =
+			'<div class="binary-notice">Binary file not displayed</div>';
 		editorContent.appendChild(pane);
 		return;
 	}
