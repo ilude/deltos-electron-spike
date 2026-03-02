@@ -6,12 +6,15 @@
 	"scripts": {
 		"build": "bun build src/main.ts src/preload.ts --outdir dist --target node --format cjs --external electron --external node-pty && bun build src/renderer.ts --outdir dist --target browser && cp node_modules/@xterm/xterm/css/xterm.css dist/xterm.css",
 		"start": "bun run build && electron .",
-		"dev": "bun run build && electron ."
+		"dev": "bun run build && electron .",
+		"lint": "biome check src",
+		"lint:fix": "biome check --write src"
 	},
 	"keywords": [],
 	"author": "",
 	"license": "ISC",
 	"devDependencies": {
+		"@biomejs/biome": "2.4.4",
 		"@types/node": "^22.0.0",
 		"electron": "^40.6.1",
 		"typescript": "^5.9.3"
